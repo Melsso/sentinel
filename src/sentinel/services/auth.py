@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -6,7 +7,9 @@ from sentinel.core.security import (
     password_hasher,
     create_refresh_token,
     hash_token,
+    create_verification_token,
 )
+from sentinel.core.redis import set_value, get_value, delete_value
 from sentinel.database.models import AuthProvider, User, Session
 from sentinel.schemas.auth import RegisterRequest, LoginRequest
 from sentinel.config import settings
@@ -28,6 +31,10 @@ class InvalidSessionError(Exception):
     pass
 
 
+class InvalidVerificationTokenError(Exception):
+    pass
+
+
 async def register_user(db: AsyncSession, data: RegisterRequest) -> User:
     email = data.email.strip().lower()
 
@@ -43,10 +50,11 @@ async def register_user(db: AsyncSession, data: RegisterRequest) -> User:
         date_of_birth=data.date_of_birth,
         is_deleted=False,
     )
-
     db.add(user)
     await db.commit()
     await db.refresh(user)
+
+    await create_email_verification_token(user)
 
     return user
 
@@ -59,6 +67,7 @@ async def authenticate_user(db: AsyncSession, data: LoginRequest) -> User:
     if (
         user is None
         or user.password_hash is None
+        or not user.is_verified
         or user.is_deleted
         or not password_hasher.verify(data.password, user.password_hash)
     ):
@@ -130,3 +139,41 @@ async def logout_user(db: AsyncSession, refresh_token: str) -> None:
         session.revoked_at = datetime.utcnow()
 
         await db.commit()
+
+
+async def create_email_verification_token(user: User) -> str:
+    token = create_verification_token()
+
+    await set_value(
+        f"email_verify:{token}",
+        str(user.id),
+        settings.email_verification_expire_minutes * 60,
+    )
+
+    return token
+
+
+async def verify_email(db: AsyncSession, token: str) -> User:
+    user_id = await get_value(f"email_verify:{token}")
+
+    if user_id is None:
+        raise InvalidVerificationTokenError()
+
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise InvalidVerificationTokenError()
+
+    user = await db.scalar(select(User).where(User.id == user_uuid))
+
+    if user is None or user.is_deleted:
+        raise InvalidVerificationTokenError()
+
+    user.is_verified = True
+
+    await delete_value(f"email_verify:{token}")
+
+    await db.commit()
+    await db.refresh(user)
+
+    return user

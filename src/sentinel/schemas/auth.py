@@ -27,3 +27,7 @@ class UserResponse(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class EmailVerificationRequest(BaseModel):
+    token: str

@@ -48,3 +48,7 @@ def decode_access_token(token: str) -> dict:
         )
     except JWTError:
         raise ValueError("Invalid token")
+
+
+def create_verification_token() -> str:
+    return secrets.token_urlsafe(32)

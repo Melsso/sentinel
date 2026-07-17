@@ -2,7 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sentinel.database.session import get_db
-from sentinel.schemas.auth import RegisterRequest, UserResponse, LoginRequest
+from sentinel.schemas.auth import (
+    RegisterRequest,
+    UserResponse,
+    LoginRequest,
+    EmailVerificationRequest,
+)
 from sentinel.schemas.token import TokenResponse, RefreshTokenRequest
 
 from sentinel.core.security import create_access_token
@@ -12,10 +17,12 @@ from sentinel.services.auth import (
     create_session,
     refresh_session,
     logout_user,
+    verify_email,
     EmailAlreadyExistsError,
     InvalidCredentialsError,
     InvalidRefreshTokenError,
     InvalidSessionError,
+    InvalidVerificationTokenError,
 )
 
 
@@ -94,3 +101,19 @@ async def logout(data: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token.",
         )
+
+
+@router.post("/verify-email", response_model=UserResponse)
+async def verify_email_route(
+    data: EmailVerificationRequest, db: AsyncSession = Depends(get_db)
+):
+    try:
+        user = await verify_email(db, data.token)
+
+    except InvalidVerificationTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token.",
+        )
+
+    return user

@@ -42,7 +42,7 @@ class User(Base):
 
     role: Mapped[UserRole] = mapped_column(SQLEnum(UserRole), default=UserRole.USER)
     is_verified: Mapped[bool] = mapped_column(default=False)
-    is_deleted: Mapped[bool] = mapped_column(default=True)
+    is_deleted: Mapped[bool] = mapped_column(default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
