@@ -1,3 +1,6 @@
+import hashlib
+import secrets
+
 from datetime import datetime, timedelta, timezone
 from pwdlib import PasswordHash
 from jose import JWTError, jwt
@@ -5,6 +8,7 @@ from jose import JWTError, jwt
 from sentinel.config import settings
 
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+REFRESH_TOKEN_EXPIRE_DAYS = 30
 password_hasher = PasswordHash.recommended()
 
 
@@ -26,6 +30,14 @@ def create_access_token(subject: str, expires_delta: timedelta | None = None) ->
         settings.jwt_secret,
         algorithm=settings.jwt_algorithm,
     )
+
+
+def create_refresh_token() -> str:
+    return secrets.token_urlsafe(64)
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def decode_access_token(token: str) -> dict:

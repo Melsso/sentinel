@@ -4,13 +4,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sentinel.database.session import get_db
 from sentinel.schemas.auth import RegisterRequest, UserResponse, LoginRequest
 from sentinel.schemas.token import TokenResponse
+
+from sentinel.core.security import create_access_token
 from sentinel.services.auth import (
     authenticate_user,
     register_user,
+    create_session,
     EmailAlreadyExistsError,
     InvalidCredentialsError,
 )
-from sentinel.services.token import generate_access_token
 
 
 router = APIRouter(
@@ -46,6 +48,11 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
             detail="Invalid email or password.",
         )
 
-    token = generate_access_token(user)
+    access_token = create_access_token(str(user.id))
 
-    return TokenResponse(access_token=token)
+    refresh_token = await create_session(db, user)
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+    )

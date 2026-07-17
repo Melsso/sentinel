@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from sentinel.database.models import Base
 from sentinel.database.session import engine
 
+from sentinel.routes.auth import router
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -19,3 +21,5 @@ app = FastAPI(
     description="Authentication server",
     lifespan=lifespan,
 )
+
+app.include_router(router)

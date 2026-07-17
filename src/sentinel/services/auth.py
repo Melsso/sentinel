@@ -2,12 +2,14 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sentinel.core.security import password_hasher
+from sentinel.core.security import (
+    password_hasher,
+    create_refresh_token,
+    hash_token,
+    REFRESH_TOKEN_EXPIRE_DAYS,
+)
 from sentinel.database.models import AuthProvider, User, Session
 from sentinel.schemas.auth import RegisterRequest, LoginRequest
-
-
-REFRESH_TOKEN_EXPIRE_DAYS = 30
 
 
 class EmailAlreadyExistsError(Exception):
@@ -57,17 +59,17 @@ async def authenticate_user(db: AsyncSession, data: LoginRequest) -> User:
     return user
 
 
-async def create_session(
-    db: AsyncSession, user: User, refresh_token_hash: str
-) -> Session:
+async def create_session(db: AsyncSession, user: User) -> str:
+    refresh_token = create_refresh_token()
+
     session = Session(
         user_id=user.id,
-        refresh_token_hash=refresh_token_hash,
-        expires_at=(datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)),
+        refresh_token_hash=hash_token(refresh_token),
+        expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
     )
 
     db.add(session)
-    await db.commit()
-    await db.refresh(session)
 
-    return session
+    await db.commit()
+
+    return refresh_token
