@@ -7,8 +7,7 @@ from jose import JWTError, jwt
 
 from sentinel.config import settings
 
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-REFRESH_TOKEN_EXPIRE_DAYS = 30
+
 password_hasher = PasswordHash.recommended()
 
 
@@ -16,7 +15,7 @@ def create_access_token(subject: str, expires_delta: timedelta | None = None) ->
     expire = datetime.now(timezone.utc) + (
         expires_delta
         if expires_delta
-        else timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        else timedelta(minutes=settings.access_token_expire_minutes)
     )
 
     payload = {

@@ -6,10 +6,10 @@ from sentinel.core.security import (
     password_hasher,
     create_refresh_token,
     hash_token,
-    REFRESH_TOKEN_EXPIRE_DAYS,
 )
 from sentinel.database.models import AuthProvider, User, Session
 from sentinel.schemas.auth import RegisterRequest, LoginRequest
+from sentinel.config import settings
 
 
 class EmailAlreadyExistsError(Exception):
@@ -73,7 +73,8 @@ async def create_session(db: AsyncSession, user: User) -> str:
     session = Session(
         user_id=user.id,
         refresh_token_hash=hash_token(refresh_token),
-        expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+        expires_at=datetime.utcnow()
+        + timedelta(days=settings.refresh_token_expire_days),
     )
 
     db.add(session)
@@ -106,7 +107,9 @@ async def refresh_session(db: AsyncSession, refresh_token: str) -> tuple[User, s
 
     session.refresh_token_hash = hash_token(new_refresh_token)
 
-    session.expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    session.expires_at = datetime.utcnow() + timedelta(
+        days=settings.refresh_token_expire_days
+    )
 
     await db.commit()
 

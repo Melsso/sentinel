@@ -1,3 +1,4 @@
+import pytest
 import pytest_asyncio
 
 from httpx import AsyncClient, ASGITransport
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import (
 
 from sentinel.database.models import Base
 from sentinel.database.session import get_db
+from sentinel.config import Settings, settings
 from sentinel.main import app
 
 
@@ -50,3 +52,19 @@ async def client(db_session: AsyncSession):
         yield client
 
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def override_settings():
+    test_settings = Settings(
+        database_url="sqlite+aiosqlite:///:memory:",
+        redis_url="redis://localhost:6379",
+        jwt_secret="test-secret",
+        jwt_algorithm="HS256",
+        access_token_expire_minutes=5,
+        refresh_token_expire_days=1,
+    )
+
+    settings.__dict__.update(test_settings.__dict__)
+
+    yield
