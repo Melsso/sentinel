@@ -19,7 +19,8 @@ dependencies = [
     "greenlet (>=3.5.3,<4.0.0)",
     "python-jose (>=3.5.0,<4.0.0)",
     "cryptography (>=49.0.0,<50.0.0)",
-    "pwdlib (>=0.3.0,<0.4.0)"
+    "pwdlib (>=0.3.0,<0.4.0)",
+    "pydantic[email] (>=2.13.4,<3.0.0)"
 ]
 
 [tool.poetry]
@@ -37,5 +38,6 @@ dev = [
     "ruff (>=0.15.21,<0.16.0)",
     "mypy (>=2.3.0,<3.0.0)",
     "pydantic (>=2.13.4,<3.0.0)",
-    "types-python-jose (>=3.5.0.20260408,<4.0.0.0)"
+    "types-python-jose (>=3.5.0.20260408,<4.0.0.0)",
+    "aiosqlite (>=0.22.1,<0.23.0)"
 ]

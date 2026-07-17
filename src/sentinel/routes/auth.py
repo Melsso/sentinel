@@ -3,15 +3,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sentinel.database.session import get_db
 from sentinel.schemas.auth import RegisterRequest, UserResponse, LoginRequest
-from sentinel.schemas.token import TokenResponse
+from sentinel.schemas.token import TokenResponse, RefreshTokenRequest
 
 from sentinel.core.security import create_access_token
 from sentinel.services.auth import (
     authenticate_user,
     register_user,
     create_session,
+    refresh_session,
+    logout_user,
     EmailAlreadyExistsError,
     InvalidCredentialsError,
+    InvalidRefreshTokenError,
+    InvalidSessionError,
 )
 
 
@@ -56,3 +60,37 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
         access_token=access_token,
         refresh_token=refresh_token,
     )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh(data: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        user, new_refresh_token = await refresh_session(
+            db,
+            data.refresh_token,
+        )
+
+    except InvalidRefreshTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token.",
+        )
+
+    access_token = create_access_token(str(user.id))
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=new_refresh_token,
+    )
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(data: RefreshTokenRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        await logout_user(db, data.refresh_token)
+
+    except InvalidSessionError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token.",
+        )

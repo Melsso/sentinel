@@ -20,6 +20,14 @@ class InvalidCredentialsError(Exception):
     pass
 
 
+class InvalidRefreshTokenError(Exception):
+    pass
+
+
+class InvalidSessionError(Exception):
+    pass
+
+
 async def register_user(db: AsyncSession, data: RegisterRequest) -> User:
     email = data.email.strip().lower()
 
@@ -73,3 +81,49 @@ async def create_session(db: AsyncSession, user: User) -> str:
     await db.commit()
 
     return refresh_token
+
+
+async def refresh_session(db: AsyncSession, refresh_token: str) -> tuple[User, str]:
+    token_hash = hash_token(refresh_token)
+
+    session = await db.scalar(
+        select(Session).where(Session.refresh_token_hash == token_hash)
+    )
+
+    if (
+        session is None
+        or session.revoked_at is not None
+        or session.expires_at < datetime.utcnow()
+    ):
+        raise InvalidRefreshTokenError()
+
+    user = await db.scalar(select(User).where(User.id == session.user_id))
+
+    if user is None or user.is_deleted:
+        raise InvalidRefreshTokenError()
+
+    new_refresh_token = create_refresh_token()
+
+    session.refresh_token_hash = hash_token(new_refresh_token)
+
+    session.expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+
+    await db.commit()
+
+    return user, new_refresh_token
+
+
+async def logout_user(db: AsyncSession, refresh_token: str) -> None:
+    token_hash = hash_token(refresh_token)
+
+    session = await db.scalar(
+        select(Session).where(Session.refresh_token_hash == token_hash)
+    )
+
+    if session is None:
+        raise InvalidSessionError()
+
+    if session.revoked_at is None:
+        session.revoked_at = datetime.utcnow()
+
+        await db.commit()
