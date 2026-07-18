@@ -4,11 +4,14 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from sentinel.config import settings
+from sentinel.core.logging import configure_logging
 from sentinel.database.models import Base
 from sentinel.database.session import engine
 
 from sentinel.routes.auth import router as auth_router
 from sentinel.routes.health import router as health_router
+
+configure_logging(settings.log_level)
 
 
 @asynccontextmanager

@@ -25,6 +25,8 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
+    log_level: str = "INFO"
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [

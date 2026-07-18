@@ -129,7 +129,7 @@ async def refresh_session(db: AsyncSession, refresh_token: str) -> tuple[User, s
     return user, new_refresh_token
 
 
-async def logout_user(db: AsyncSession, refresh_token: str) -> None:
+async def logout_user(db: AsyncSession, refresh_token: str) -> UUID:
     token_hash = hash_token(refresh_token)
 
     session = await db.scalar(
@@ -143,6 +143,8 @@ async def logout_user(db: AsyncSession, refresh_token: str) -> None:
         session.revoked_at = datetime.utcnow()
 
         await db.commit()
+
+    return session.user_id
 
 
 async def create_email_verification_token(user: User) -> str:
@@ -214,18 +216,20 @@ async def create_password_reset_token(user: User) -> str:
     return token
 
 
-async def request_password_reset(db: AsyncSession, email: str) -> None:
+async def request_password_reset(db: AsyncSession, email: str) -> bool:
     normalized_email = email.strip().lower()
 
     user = await db.scalar(select(User).where(User.email == normalized_email))
 
     if user is None or user.is_deleted or user.provider != AuthProvider.LOCAL:
-        return
+        return False
 
     await create_password_reset_token(user)
 
+    return True
 
-async def reset_password(db: AsyncSession, token: str, new_password: str) -> None:
+
+async def reset_password(db: AsyncSession, token: str, new_password: str) -> UUID:
     user_id = await get_value(f"password_reset:{token}")
 
     if user_id is None:
@@ -247,6 +251,8 @@ async def reset_password(db: AsyncSession, token: str, new_password: str) -> Non
     await revoke_all_sessions(db, user, commit=False)
 
     await db.commit()
+
+    return user.id
 
 
 async def change_password(
