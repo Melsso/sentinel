@@ -24,6 +24,14 @@ settings.jwt_algorithm = "HS256"
 settings.access_token_expire_minutes = 5
 settings.refresh_token_expire_days = 1
 settings.email_verification_expire_minutes = 30
+settings.password_reset_expire_minutes = 30
+
+settings.login_rate_limit = 5
+settings.login_rate_limit_window_seconds = 60
+settings.register_rate_limit = 20
+settings.register_rate_limit_window_seconds = 60
+settings.forgot_password_rate_limit = 5
+settings.forgot_password_rate_limit_window_seconds = 60
 
 engine = create_async_engine(settings.database_url, future=True)
 TestingSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
@@ -36,7 +44,6 @@ def unique_email(prefix: str = "user") -> str:
 
 
 def decode_token(token: str) -> dict:
-    """Decode a JWT the same way the app does, for asserting on its payload."""
     return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
 
 
@@ -83,6 +90,14 @@ class FakeRedis:
 
     async def flushall(self):
         self.storage.clear()
+
+    async def incr(self, key):
+        current = int(self.storage.get(key, "0")) + 1
+        self.storage[key] = str(current)
+        return current
+
+    async def expire(self, key, seconds):
+        return True
 
 
 @pytest.fixture

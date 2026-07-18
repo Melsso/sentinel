@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sentinel.core.dependencies import get_current_user
+from sentinel.core.rate_limiter import rate_limit
 from sentinel.database.models import User
 from sentinel.database.session import get_db
 from sentinel.schemas.auth import (
@@ -46,7 +47,18 @@ router = APIRouter(
 
 
 @router.post(
-    "/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[
+        Depends(
+            rate_limit(
+                "register",
+                "register_rate_limit",
+                "register_rate_limit_window_seconds",
+            )
+        )
+    ],
 )
 async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
     try:
@@ -61,7 +73,20 @@ async def register(data: RegisterRequest, db: AsyncSession = Depends(get_db)):
     return user
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    dependencies=[
+        Depends(
+            rate_limit(
+                "login",
+                "login_rate_limit",
+                "login_rate_limit_window_seconds",
+                by_email=True,
+            )
+        )
+    ],
+)
 async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
     try:
         user = await authenticate_user(db, data)
@@ -146,7 +171,20 @@ async def logout_all(
     return MessageResponse(message=f"Revoked {count} active session(s).")
 
 
-@router.post("/forgot-password", response_model=MessageResponse)
+@router.post(
+    "/forgot-password",
+    response_model=MessageResponse,
+    dependencies=[
+        Depends(
+            rate_limit(
+                "forgot_password",
+                "forgot_password_rate_limit",
+                "forgot_password_rate_limit_window_seconds",
+                by_email=True,
+            )
+        )
+    ],
+)
 async def forgot_password(
     data: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)
 ):

@@ -14,6 +14,15 @@ class Settings(BaseSettings):
     email_verification_expire_minutes: int = 30
     password_reset_expire_minutes: int = 30
 
+    login_rate_limit: int = 5
+    login_rate_limit_window_seconds: int = 60
+
+    register_rate_limit: int = 10
+    register_rate_limit_window_seconds: int = 60
+
+    forgot_password_rate_limit: int = 5
+    forgot_password_rate_limit_window_seconds: int = 60
+
     class Config:
         env_file = ".env"
 
