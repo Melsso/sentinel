@@ -1,12 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sentinel.core.dependencies import get_current_user
+from sentinel.database.models import User
 from sentinel.database.session import get_db
 from sentinel.schemas.auth import (
     RegisterRequest,
     UserResponse,
     LoginRequest,
     EmailVerificationRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+    ChangePasswordRequest,
+    DeleteAccountRequest,
+    MessageResponse,
 )
 from sentinel.schemas.token import TokenResponse, RefreshTokenRequest
 
@@ -18,11 +25,17 @@ from sentinel.services.auth import (
     refresh_session,
     logout_user,
     verify_email,
+    request_password_reset,
+    reset_password,
+    change_password,
+    delete_account,
+    revoke_all_sessions,
     EmailAlreadyExistsError,
     InvalidCredentialsError,
     InvalidRefreshTokenError,
     InvalidSessionError,
     InvalidVerificationTokenError,
+    InvalidResetTokenError,
 )
 
 
@@ -117,3 +130,80 @@ async def verify_email_route(
         )
 
     return user
+
+
+@router.get("/me", response_model=UserResponse)
+async def me(current_user: User = Depends(get_current_user)):
+    return current_user
+
+
+@router.post("/logout-all", response_model=MessageResponse)
+async def logout_all(
+    current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    count = await revoke_all_sessions(db, current_user)
+
+    return MessageResponse(message=f"Revoked {count} active session(s).")
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+async def forgot_password(
+    data: ForgotPasswordRequest, db: AsyncSession = Depends(get_db)
+):
+    await request_password_reset(db, data.email)
+
+    return MessageResponse(
+        message="If that email is registered, a password reset link has been sent."
+    )
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+async def reset_password_route(
+    data: ResetPasswordRequest, db: AsyncSession = Depends(get_db)
+):
+    try:
+        await reset_password(db, data.token, data.new_password)
+
+    except InvalidResetTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token.",
+        )
+
+    return MessageResponse(message="Password has been reset. Please log in again.")
+
+
+@router.post("/change-password", response_model=MessageResponse)
+async def change_password_route(
+    data: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await change_password(
+            db, current_user, data.current_password, data.new_password
+        )
+
+    except InvalidCredentialsError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is incorrect.",
+        )
+
+    return MessageResponse(message="Password changed. Please log in again.")
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account_route(
+    data: DeleteAccountRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        await delete_account(db, current_user, data.password)
+
+    except InvalidCredentialsError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Password is incorrect.",
+        )

@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 30
 
     email_verification_expire_minutes: int = 30
+    password_reset_expire_minutes: int = 30
 
     class Config:
         env_file = ".env"

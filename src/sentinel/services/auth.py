@@ -35,6 +35,10 @@ class InvalidVerificationTokenError(Exception):
     pass
 
 
+class InvalidResetTokenError(Exception):
+    pass
+
+
 async def register_user(db: AsyncSession, data: RegisterRequest) -> User:
     email = data.email.strip().lower()
 
@@ -177,3 +181,98 @@ async def verify_email(db: AsyncSession, token: str) -> User:
     await db.refresh(user)
 
     return user
+
+
+async def revoke_all_sessions(db: AsyncSession, user: User, commit: bool = True) -> int:
+    result = await db.scalars(
+        select(Session).where(
+            Session.user_id == user.id,
+            Session.revoked_at.is_(None),
+        )
+    )
+    sessions = list(result)
+    now = datetime.utcnow()
+
+    for session in sessions:
+        session.revoked_at = now
+
+    if commit:
+        await db.commit()
+
+    return len(sessions)
+
+
+async def create_password_reset_token(user: User) -> str:
+    token = create_verification_token()
+
+    await set_value(
+        f"password_reset:{token}",
+        str(user.id),
+        settings.password_reset_expire_minutes * 60,
+    )
+
+    return token
+
+
+async def request_password_reset(db: AsyncSession, email: str) -> None:
+    normalized_email = email.strip().lower()
+
+    user = await db.scalar(select(User).where(User.email == normalized_email))
+
+    if user is None or user.is_deleted or user.provider != AuthProvider.LOCAL:
+        return
+
+    await create_password_reset_token(user)
+
+
+async def reset_password(db: AsyncSession, token: str, new_password: str) -> None:
+    user_id = await get_value(f"password_reset:{token}")
+
+    if user_id is None:
+        raise InvalidResetTokenError()
+
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise InvalidResetTokenError()
+
+    user = await db.scalar(select(User).where(User.id == user_uuid))
+
+    if user is None or user.is_deleted:
+        raise InvalidResetTokenError()
+
+    user.password_hash = password_hasher.hash(new_password)
+
+    await delete_value(f"password_reset:{token}")
+    await revoke_all_sessions(db, user, commit=False)
+
+    await db.commit()
+
+
+async def change_password(
+    db: AsyncSession, user: User, current_password: str, new_password: str
+) -> None:
+    if user.password_hash is None or not password_hasher.verify(
+        current_password, user.password_hash
+    ):
+        raise InvalidCredentialsError()
+
+    user.password_hash = password_hasher.hash(new_password)
+
+    await revoke_all_sessions(db, user, commit=False)
+
+    await db.commit()
+
+
+async def delete_account(db: AsyncSession, user: User, password: str) -> None:
+    if user.provider == AuthProvider.LOCAL:
+        if user.password_hash is None or not password_hasher.verify(
+            password, user.password_hash
+        ):
+            raise InvalidCredentialsError()
+
+    user.is_deleted = True
+
+    await revoke_all_sessions(db, user, commit=False)
+
+    await db.commit()
