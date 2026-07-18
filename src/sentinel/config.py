@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     forgot_password_rate_limit: int = 5
     forgot_password_rate_limit_window_seconds: int = 60
 
+    cors_origins: str = "http://localhost:3000,http://localhost:5173"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [
+            origin.strip() for origin in self.cors_origins.split(",") if origin.strip()
+        ]
+
     class Config:
         env_file = ".env"
 

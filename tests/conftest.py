@@ -91,6 +91,9 @@ class FakeRedis:
     async def flushall(self):
         self.storage.clear()
 
+    async def ping(self):
+        return True
+
     async def incr(self, key):
         current = int(self.storage.get(key, "0")) + 1
         self.storage[key] = str(current)
