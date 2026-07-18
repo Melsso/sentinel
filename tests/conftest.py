@@ -226,3 +226,40 @@ async def sessions_for_user(db_session):
         return list(result)
 
     return _list
+
+
+@pytest_asyncio.fixture
+async def login(client):
+
+    async def _login(user: dict) -> dict:
+        response = await client.post(
+            "/auth/login",
+            json={"email": user["email"], "password": user["password"]},
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    return _login
+
+
+@pytest_asyncio.fixture
+async def auth_headers(login):
+
+    async def _headers(user: dict) -> dict:
+        tokens = await login(user)
+        return {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    return _headers
+
+
+@pytest_asyncio.fixture
+async def find_password_reset_token(redis):
+
+    def _find(user_id) -> str | None:
+        target = str(user_id)
+        for key, value in redis.storage.items():
+            if key.startswith("password_reset:") and value == target:
+                return key.removeprefix("password_reset:")
+        return None
+
+    return _find
