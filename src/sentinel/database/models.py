@@ -5,6 +5,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import Date, DateTime, Enum as SQLEnum, String, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase, relationship
 
+from sentinel.core.time import utcnow
+
 
 class AuthProvider(str, Enum):
     LOCAL = "local"
@@ -44,9 +46,9 @@ class User(Base):
     is_verified: Mapped[bool] = mapped_column(default=False)
     is_deleted: Mapped[bool] = mapped_column(default=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
 
@@ -64,5 +66,5 @@ class Session(Base):
     user: Mapped["User"] = relationship(back_populates="sessions")
 
     expires_at: Mapped[datetime] = mapped_column(DateTime)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

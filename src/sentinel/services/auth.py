@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +10,7 @@ from sentinel.core.security import (
     create_verification_token,
 )
 from sentinel.core.redis import set_value, get_value, delete_value
+from sentinel.core.time import utcnow
 from sentinel.database.models import AuthProvider, User, Session
 from sentinel.schemas.auth import RegisterRequest, LoginRequest
 from sentinel.config import settings
@@ -86,8 +87,7 @@ async def create_session(db: AsyncSession, user: User) -> str:
     session = Session(
         user_id=user.id,
         refresh_token_hash=hash_token(refresh_token),
-        expires_at=datetime.utcnow()
-        + timedelta(days=settings.refresh_token_expire_days),
+        expires_at=utcnow() + timedelta(days=settings.refresh_token_expire_days),
     )
 
     db.add(session)
@@ -107,7 +107,7 @@ async def refresh_session(db: AsyncSession, refresh_token: str) -> tuple[User, s
     if (
         session is None
         or session.revoked_at is not None
-        or session.expires_at < datetime.utcnow()
+        or session.expires_at < utcnow()
     ):
         raise InvalidRefreshTokenError()
 
@@ -120,9 +120,7 @@ async def refresh_session(db: AsyncSession, refresh_token: str) -> tuple[User, s
 
     session.refresh_token_hash = hash_token(new_refresh_token)
 
-    session.expires_at = datetime.utcnow() + timedelta(
-        days=settings.refresh_token_expire_days
-    )
+    session.expires_at = utcnow() + timedelta(days=settings.refresh_token_expire_days)
 
     await db.commit()
 
@@ -140,7 +138,7 @@ async def logout_user(db: AsyncSession, refresh_token: str) -> UUID:
         raise InvalidSessionError()
 
     if session.revoked_at is None:
-        session.revoked_at = datetime.utcnow()
+        session.revoked_at = utcnow()
 
         await db.commit()
 
@@ -193,7 +191,7 @@ async def revoke_all_sessions(db: AsyncSession, user: User, commit: bool = True)
         )
     )
     sessions = list(result)
-    now = datetime.utcnow()
+    now = utcnow()
 
     for session in sessions:
         session.revoked_at = now

@@ -1,6 +1,8 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
+
+from sentinel.core.time import utcnow
 
 pytestmark = pytest.mark.asyncio
 
@@ -98,7 +100,7 @@ async def test_refresh_expired_session(
     tokens = await _login(client, user)
 
     session = await get_session_for_token(tokens["refresh_token"])
-    session.expires_at = datetime.utcnow() - timedelta(minutes=1)
+    session.expires_at = utcnow() - timedelta(minutes=1)
     await db_session.commit()
 
     response = await client.post(
