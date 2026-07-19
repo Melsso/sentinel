@@ -9,7 +9,7 @@ from sentinel.core.security import (
     hash_token,
     create_verification_token,
 )
-from sentinel.core.redis import set_value, get_value, delete_value
+from sentinel.core.redis import set_value, get_value, delete_value, get_redis
 from sentinel.core.time import utcnow
 from sentinel.core.email import send_email
 from sentinel.core.email_templates import verification_email, password_reset_email
@@ -23,6 +23,10 @@ class EmailAlreadyExistsError(Exception):
 
 
 class InvalidCredentialsError(Exception):
+    pass
+
+
+class AccountLockedError(Exception):
     pass
 
 
@@ -66,8 +70,46 @@ async def register_user(db: AsyncSession, data: RegisterRequest) -> User:
     return user
 
 
+_LOCKOUT_KEY_PREFIX = "login_lockout"
+_FAILURE_KEY_PREFIX = "login_failures"
+
+
+async def _is_account_locked(email: str) -> bool:
+    redis_client = get_redis()
+
+    return bool(await redis_client.exists(f"{_LOCKOUT_KEY_PREFIX}:{email}"))
+
+
+async def _register_failed_login(email: str) -> None:
+    redis_client = get_redis()
+    key = f"{_FAILURE_KEY_PREFIX}:{email}"
+
+    count = await redis_client.incr(key)
+
+    if count == 1:
+        await redis_client.expire(key, settings.login_lockout_duration_seconds)
+
+    if count >= settings.login_lockout_threshold:
+        await redis_client.set(
+            f"{_LOCKOUT_KEY_PREFIX}:{email}",
+            "1",
+            ex=settings.login_lockout_duration_seconds,
+        )
+        await redis_client.delete(key)
+
+
+async def _clear_login_failures(email: str) -> None:
+    redis_client = get_redis()
+
+    await redis_client.delete(f"{_FAILURE_KEY_PREFIX}:{email}")
+    await redis_client.delete(f"{_LOCKOUT_KEY_PREFIX}:{email}")
+
+
 async def authenticate_user(db: AsyncSession, data: LoginRequest) -> User:
     email = data.email.strip().lower()
+
+    if await _is_account_locked(email):
+        raise AccountLockedError()
 
     user = await db.scalar(select(User).where(User.email == email))
 
@@ -76,9 +118,14 @@ async def authenticate_user(db: AsyncSession, data: LoginRequest) -> User:
         or user.password_hash is None
         or not user.is_verified
         or user.is_deleted
-        or not password_hasher.verify(data.password, user.password_hash)
     ):
         raise InvalidCredentialsError()
+
+    if not password_hasher.verify(data.password, user.password_hash):
+        await _register_failed_login(email)
+        raise InvalidCredentialsError()
+
+    await _clear_login_failures(email)
 
     return user
 
@@ -218,6 +265,21 @@ async def list_active_sessions(db: AsyncSession, user: User) -> list[Session]:
     )
 
     return list(result)
+
+
+async def revoke_session(db: AsyncSession, user: User, session_id: UUID) -> bool:
+    session = await db.scalar(
+        select(Session).where(Session.id == session_id, Session.user_id == user.id)
+    )
+
+    if session is None:
+        return False
+
+    if session.revoked_at is None:
+        session.revoked_at = utcnow()
+        await db.commit()
+
+    return True
 
 
 async def revoke_all_sessions(db: AsyncSession, user: User, commit: bool = True) -> int:

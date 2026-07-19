@@ -1,4 +1,5 @@
 import logging
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,8 +39,10 @@ from sentinel.services.auth import (
     delete_account,
     revoke_all_sessions,
     list_active_sessions,
+    revoke_session,
     EmailAlreadyExistsError,
     InvalidCredentialsError,
+    AccountLockedError,
     InvalidRefreshTokenError,
     InvalidSessionError,
     InvalidVerificationTokenError,
@@ -110,6 +113,19 @@ async def login(
 ):
     try:
         user = await authenticate_user(db, data)
+
+    except AccountLockedError:
+        log_auth_event(
+            "login_failed",
+            request,
+            level=logging.WARNING,
+            reason="account_locked",
+            email=data.email.strip().lower(),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+        )
 
     except InvalidCredentialsError:
         log_auth_event(
@@ -261,6 +277,29 @@ async def list_sessions(
     db: AsyncSession = Depends(get_db),
 ):
     return await list_active_sessions(db, current_user)
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_session_route(
+    session_id: UUID,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    found = await revoke_session(db, current_user, session_id)
+
+    if not found:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found.",
+        )
+
+    log_auth_event(
+        "session_revoked",
+        request,
+        user_id=str(current_user.id),
+        session_id=str(session_id),
+    )
 
 
 @router.post("/logout-all", response_model=MessageResponse)

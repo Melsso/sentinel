@@ -12,6 +12,15 @@ def _clear_rate_limit_keys(redis):
         del redis.storage[key]
 
 
+def _clear_lockout_keys(redis):
+    for key in [
+        k
+        for k in redis.storage
+        if k.startswith("login_lockout:") or k.startswith("login_failures:")
+    ]:
+        del redis.storage[key]
+
+
 async def test_login_blocked_after_too_many_attempts(client, verified_user, redis):
     user = await verified_user()
     limit = settings.login_rate_limit
@@ -118,6 +127,7 @@ async def test_login_rate_limit_resets_after_window(client, verified_user, redis
     assert blocked.status_code == 429
 
     _clear_rate_limit_keys(redis)
+    _clear_lockout_keys(redis)
 
     recovered = await client.post(
         "/auth/login",

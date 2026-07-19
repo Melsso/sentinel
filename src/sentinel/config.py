@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     resend_verification_rate_limit: int = 5
     resend_verification_rate_limit_window_seconds: int = 60
 
+    login_lockout_threshold: int = 10
+    login_lockout_duration_seconds: int = 900
+
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
     log_level: str = "INFO"
