@@ -11,6 +11,8 @@ from sentinel.core.security import (
 )
 from sentinel.core.redis import set_value, get_value, delete_value
 from sentinel.core.time import utcnow
+from sentinel.core.email import send_email
+from sentinel.core.email_templates import verification_email, password_reset_email
 from sentinel.database.models import AuthProvider, User, Session
 from sentinel.schemas.auth import RegisterRequest, LoginRequest
 from sentinel.config import settings
@@ -154,6 +156,9 @@ async def create_email_verification_token(user: User) -> str:
         settings.email_verification_expire_minutes * 60,
     )
 
+    subject, body = verification_email(token)
+    await send_email(user.email, subject, body)
+
     return token
 
 
@@ -210,6 +215,9 @@ async def create_password_reset_token(user: User) -> str:
         str(user.id),
         settings.password_reset_expire_minutes * 60,
     )
+
+    subject, body = password_reset_email(token)
+    await send_email(user.email, subject, body)
 
     return token
 

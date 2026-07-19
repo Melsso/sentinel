@@ -114,8 +114,27 @@ def redis(monkeypatch):
     return fake
 
 
+class FakeEmailSender:
+    def __init__(self):
+        self.sent: list[dict] = []
+
+    async def send(self, to: str, subject: str, body: str) -> None:
+        self.sent.append({"to": to, "subject": subject, "body": body})
+
+
+@pytest.fixture
+def fake_email(monkeypatch):
+    import sentinel.core.email as email_module
+
+    fake = FakeEmailSender()
+
+    monkeypatch.setattr(email_module, "_sender", fake)
+
+    return fake
+
+
 @pytest_asyncio.fixture
-async def client(db_session: AsyncSession, redis):
+async def client(db_session: AsyncSession, redis, fake_email):
 
     async def override_get_db():
         yield db_session

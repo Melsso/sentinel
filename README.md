@@ -7,7 +7,7 @@ This is a portfolio project — it's not tied to any particular frontend and doe
 ## Features
 
 - Email/password registration with hashed passwords (Argon2 via `pwdlib`)
-- Email verification (Redis-backed, one-time-use tokens)
+- Email verification and password reset emails (pluggable backend: logs to console by default for local dev, or real SMTP delivery to any provider)
 - Login issuing a short-lived JWT access token + a long-lived, rotating refresh token
 - Refresh-token rotation, revocation, and "log out everywhere" (`/logout-all`)
 - Forgot/reset password flow that never reveals whether an email is registered
@@ -35,6 +35,8 @@ curl http://localhost:8000/health
 
 Interactive API docs are at `http://localhost:8000/docs`.
 
+By default (`EMAIL_BACKEND=console`), verification/reset emails aren't actually sent anywhere — they're logged as structured JSON (`docker compose logs -f app`, look for `"event": "email_dispatched"`), which includes the link you'd otherwise click. Set `EMAIL_BACKEND=smtp` plus the `SMTP_*` settings in `.env.example` to deliver real email through any provider.
+
 ## Running locally without Docker
 
 Requires Python 3.12+, [Poetry](https://python-poetry.org/), and a running Postgres + Redis (`docker compose up postgres redis` is the easiest way to get those two without the app itself).
@@ -55,9 +57,10 @@ See `.env.example` for every configurable setting and its default.
 poetry run ruff check .
 poetry run mypy .
 poetry run pytest
+poetry run pip-audit
 ```
 
-All three also run in CI on every push (`.github/workflows/ci.yml`).
+All four also run in CI on every push (`.github/workflows/ci.yml`).
 
 ## API overview
 
@@ -98,6 +101,5 @@ tests/             # pytest suite (one file per endpoint/feature area)
 ## Known gaps / not yet implemented
 
 - OAuth provider login (`AuthProvider.GOOGLE` etc. exist in the data model; no callback routes yet)
-- Actual email delivery — verification/reset tokens are generated and stored in Redis, but nothing sends them anywhere yet (check Redis directly, or add an email provider integration)
 - Role-based authorization (`UserRole` is stored but nothing currently checks it)
 - Database migrations (schema is created via `Base.metadata.create_all` at startup)

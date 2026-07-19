@@ -27,6 +27,17 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    email_backend: str = "console"
+    email_from: str = "no-reply@sentinel.local"
+
+    frontend_url: str = "http://localhost:3000"
+
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_use_tls: bool = True
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [
