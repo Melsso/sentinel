@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     forgot_password_rate_limit: int = 5
     forgot_password_rate_limit_window_seconds: int = 60
 
+    resend_verification_rate_limit: int = 5
+    resend_verification_rate_limit_window_seconds: int = 60
+
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
     log_level: str = "INFO"

@@ -13,6 +13,7 @@ from sentinel.schemas.auth import (
     UserResponse,
     LoginRequest,
     EmailVerificationRequest,
+    ResendVerificationEmailRequest,
     ForgotPasswordRequest,
     ResetPasswordRequest,
     ChangePasswordRequest,
@@ -29,6 +30,7 @@ from sentinel.services.auth import (
     refresh_session,
     logout_user,
     verify_email,
+    resend_verification_email,
     request_password_reset,
     reset_password,
     change_password,
@@ -208,6 +210,42 @@ async def verify_email_route(
     log_auth_event("email_verification_success", request, user_id=str(user.id))
 
     return user
+
+
+@router.post(
+    "/resend-verification-email",
+    response_model=MessageResponse,
+    dependencies=[
+        Depends(
+            rate_limit(
+                "resend_verification",
+                "resend_verification_rate_limit",
+                "resend_verification_rate_limit_window_seconds",
+                by_email=True,
+            )
+        )
+    ],
+)
+async def resend_verification_email_route(
+    data: ResendVerificationEmailRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    email_sent = await resend_verification_email(db, data.email)
+
+    log_auth_event(
+        "verification_email_resend_requested",
+        request,
+        email=data.email.strip().lower(),
+        email_sent=email_sent,
+    )
+
+    return MessageResponse(
+        message=(
+            "If that email is registered and not yet verified, "
+            "a new verification link has been sent."
+        )
+    )
 
 
 @router.get("/me", response_model=UserResponse)

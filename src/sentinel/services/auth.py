@@ -188,6 +188,24 @@ async def verify_email(db: AsyncSession, token: str) -> User:
     return user
 
 
+async def resend_verification_email(db: AsyncSession, email: str) -> bool:
+    normalized_email = email.strip().lower()
+
+    user = await db.scalar(select(User).where(User.email == normalized_email))
+
+    if (
+        user is None
+        or user.is_deleted
+        or user.is_verified
+        or user.provider != AuthProvider.LOCAL
+    ):
+        return False
+
+    await create_email_verification_token(user)
+
+    return True
+
+
 async def revoke_all_sessions(db: AsyncSession, user: User, commit: bool = True) -> int:
     result = await db.scalars(
         select(Session).where(

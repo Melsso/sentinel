@@ -32,6 +32,8 @@ settings.register_rate_limit = 20
 settings.register_rate_limit_window_seconds = 60
 settings.forgot_password_rate_limit = 5
 settings.forgot_password_rate_limit_window_seconds = 60
+settings.resend_verification_rate_limit = 5
+settings.resend_verification_rate_limit_window_seconds = 60
 
 engine = create_async_engine(settings.database_url, future=True)
 TestingSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)

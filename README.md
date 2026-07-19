@@ -7,7 +7,7 @@ This is a portfolio project — it's not tied to any particular frontend and doe
 ## Features
 
 - Email/password registration with hashed passwords (Argon2 via `pwdlib`)
-- Email verification and password reset emails (pluggable backend: logs to console by default for local dev, or real SMTP delivery to any provider)
+- Email verification and password reset emails (pluggable backend: logs to console by default for local dev, or real SMTP delivery to any provider), with a resend-verification endpoint so an expired or missed link isn't a dead end
 - Login issuing a short-lived JWT access token + a long-lived, rotating refresh token
 - Refresh-token rotation, revocation, and "log out everywhere" (`/logout-all`)
 - Forgot/reset password flow that never reveals whether an email is registered
@@ -75,6 +75,7 @@ All auth routes are under `/auth`.
 | POST   | `/auth/logout-all`       | Yes            | Revoke every active session for the current user   |
 | GET    | `/auth/me`               | Yes            | Return the current user                            |
 | POST   | `/auth/verify-email`     | No (email token) | Verify an account's email address                |
+| POST   | `/auth/resend-verification-email` | No    | Issue a new verification token (always returns the same response) |
 | POST   | `/auth/forgot-password`  | No             | Request a password reset (always returns the same response) |
 | POST   | `/auth/reset-password`   | No (reset token) | Set a new password, revokes all sessions        |
 | POST   | `/auth/change-password`  | Yes            | Change password, revokes all sessions              |
@@ -102,4 +103,6 @@ tests/             # pytest suite (one file per endpoint/feature area)
 
 - OAuth provider login (`AuthProvider.GOOGLE` etc. exist in the data model; no callback routes yet)
 - Role-based authorization (`UserRole` is stored but nothing currently checks it)
-- Database migrations (schema is created via `Base.metadata.create_all` at startup)
+
+## License
+MIT.

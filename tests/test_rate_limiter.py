@@ -157,3 +157,20 @@ async def test_forgot_password_blocked_after_too_many_attempts(client, verified_
     blocked = await client.post("/auth/forgot-password", json={"email": user["email"]})
 
     assert blocked.status_code == 429
+
+
+async def test_resend_verification_blocked_after_too_many_attempts(client, register):
+    email, _, _ = await register()
+    limit = settings.resend_verification_rate_limit
+
+    for _ in range(limit):
+        response = await client.post(
+            "/auth/resend-verification-email", json={"email": email}
+        )
+        assert response.status_code == 200
+
+    blocked = await client.post(
+        "/auth/resend-verification-email", json={"email": email}
+    )
+
+    assert blocked.status_code == 429
