@@ -206,6 +206,20 @@ async def resend_verification_email(db: AsyncSession, email: str) -> bool:
     return True
 
 
+async def list_active_sessions(db: AsyncSession, user: User) -> list[Session]:
+    result = await db.scalars(
+        select(Session)
+        .where(
+            Session.user_id == user.id,
+            Session.revoked_at.is_(None),
+            Session.expires_at > utcnow(),
+        )
+        .order_by(Session.created_at.desc())
+    )
+
+    return list(result)
+
+
 async def revoke_all_sessions(db: AsyncSession, user: User, commit: bool = True) -> int:
     result = await db.scalars(
         select(Session).where(

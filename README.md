@@ -9,7 +9,7 @@ This is a portfolio project — it's not tied to any particular frontend and doe
 - Email/password registration with hashed passwords (Argon2 via `pwdlib`)
 - Email verification and password reset emails (pluggable backend: logs to console by default for local dev, or real SMTP delivery to any provider), with a resend-verification endpoint so an expired or missed link isn't a dead end
 - Login issuing a short-lived JWT access token + a long-lived, rotating refresh token
-- Refresh-token rotation, revocation, and "log out everywhere" (`/logout-all`)
+- Refresh-token rotation, revocation, and "log out everywhere" (`/logout-all`), plus a `/sessions` list to see what's currently active before you do
 - Forgot/reset password flow that never reveals whether an email is registered
 - Change password / delete account (both require re-entering the current password)
 - Per-IP and per-email rate limiting on `/login`, `/register`, and `/forgot-password`
@@ -74,6 +74,7 @@ All auth routes are under `/auth`.
 | POST   | `/auth/logout`           | No (refresh token) | Revoke a single session                        |
 | POST   | `/auth/logout-all`       | Yes            | Revoke every active session for the current user   |
 | GET    | `/auth/me`               | Yes            | Return the current user                            |
+| GET    | `/auth/sessions`         | Yes            | List active sessions (not-revoked, not-expired) for the current user |
 | POST   | `/auth/verify-email`     | No (email token) | Verify an account's email address                |
 | POST   | `/auth/resend-verification-email` | No    | Issue a new verification token (always returns the same response) |
 | POST   | `/auth/forgot-password`  | No             | Request a password reset (always returns the same response) |
@@ -105,4 +106,5 @@ tests/             # pytest suite (one file per endpoint/feature area)
 - Role-based authorization (`UserRole` is stored but nothing currently checks it)
 
 ## License
+
 MIT.

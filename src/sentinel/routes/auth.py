@@ -21,6 +21,7 @@ from sentinel.schemas.auth import (
     MessageResponse,
 )
 from sentinel.schemas.token import TokenResponse, RefreshTokenRequest
+from sentinel.schemas.session import SessionResponse
 
 from sentinel.core.security import create_access_token
 from sentinel.services.auth import (
@@ -36,6 +37,7 @@ from sentinel.services.auth import (
     change_password,
     delete_account,
     revoke_all_sessions,
+    list_active_sessions,
     EmailAlreadyExistsError,
     InvalidCredentialsError,
     InvalidRefreshTokenError,
@@ -251,6 +253,14 @@ async def resend_verification_email_route(
 @router.get("/me", response_model=UserResponse)
 async def me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.get("/sessions", response_model=list[SessionResponse])
+async def list_sessions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await list_active_sessions(db, current_user)
 
 
 @router.post("/logout-all", response_model=MessageResponse)
