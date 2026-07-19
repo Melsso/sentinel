@@ -36,6 +36,8 @@ curl http://localhost:8000/health
 
 Interactive API docs are at `http://localhost:8000/docs`.
 
+To exercise the whole stack end to end against the real Postgres/Redis (not the SQLite/FakeRedis test suite), run `./scripts/smoke_test.sh` once the containers are up — it registers a user, pulls the verification token from the app's own logs, verifies, logs in, checks `/me` and `/sessions`, rotates a refresh token, confirms the old one is rejected, logs out, triggers rate limiting, and checks the row landed in Postgres. Requires `curl` and `jq`.
+
 By default (`EMAIL_BACKEND=console`), verification/reset emails aren't actually sent anywhere — they're logged as structured JSON (`docker compose logs -f app`, look for `"event": "email_dispatched"`), which includes the link you'd otherwise click. Set `EMAIL_BACKEND=smtp` plus the `SMTP_*` settings in `.env.example` to deliver real email through any provider.
 
 ## Running locally without Docker
