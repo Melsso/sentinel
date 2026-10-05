@@ -12,18 +12,21 @@ def _events(caplog, name="sentinel.audit"):
     return [r for r in caplog.records if r.name == name]
 
 
-async def test_register_success_is_logged(client, caplog):
+async def test_register_success_is_logged(client, get_user_by_email, caplog):
+    email = unique_email()
+
     with caplog.at_level(logging.INFO, logger="sentinel.audit"):
         response = await client.post(
             "/auth/register",
-            json={"email": unique_email(), "password": "Password123!"},
+            json={"email": email, "password": "Password123!"},
         )
 
-    records = _events(caplog)
-    assert any(r.event == "register_success" for r in records)
+    assert response.status_code == 202
+    user = await get_user_by_email(email)
 
+    records = _events(caplog)
     record = next(r for r in records if r.event == "register_success")
-    assert record.user_id == response.json()["id"]
+    assert record.user_id == str(user.id)
     assert record.levelname == "INFO"
     assert hasattr(record, "ip")
 

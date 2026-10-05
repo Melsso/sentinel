@@ -1,9 +1,10 @@
+import re
 import uuid
 
+import jwt
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from jose import jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -19,7 +20,7 @@ from sentinel.main import app
 
 settings.database_url = "sqlite+aiosqlite:///:memory:"
 settings.redis_url = "redis://test"
-settings.jwt_secret = "test-secret"
+settings.jwt_secret = "test-secret-that-is-comfortably-longer-than-32-bytes"
 settings.jwt_algorithm = "HS256"
 settings.access_token_expire_minutes = 5
 settings.refresh_token_expire_days = 1
@@ -37,10 +38,14 @@ settings.resend_verification_rate_limit_window_seconds = 60
 settings.login_lockout_threshold = 3
 settings.login_lockout_duration_seconds = 900
 
+settings.trusted_proxies = "127.0.0.1"
+
 engine = create_async_engine(settings.database_url, future=True)
 TestingSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
 
 DEFAULT_PASSWORD = "Password123!"
+
+_TOKEN_PATTERN = re.compile(r"token=([A-Za-z0-9_-]+)")
 
 
 def unique_email(prefix: str = "user") -> str:
@@ -48,7 +53,13 @@ def unique_email(prefix: str = "user") -> str:
 
 
 def decode_token(token: str) -> dict:
-    return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    return jwt.decode(
+        token,
+        settings.jwt_secret,
+        algorithms=[settings.jwt_algorithm],
+        audience=settings.jwt_audience,
+        issuer=settings.jwt_issuer,
+    )
 
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
@@ -83,6 +94,9 @@ class FakeRedis:
     async def get(self, key):
         return self.storage.get(key)
 
+    async def getdel(self, key):
+        return self.storage.pop(key, None)
+
     async def delete(self, key):
         self.storage.pop(key, None)
 
@@ -105,6 +119,9 @@ class FakeRedis:
 
     async def expire(self, key, seconds):
         return True
+
+    async def eval(self, script, numkeys, *keys_and_args):
+        return await self.incr(keys_and_args[0])
 
 
 @pytest.fixture
@@ -167,29 +184,65 @@ async def register(client):
     return _register
 
 
+def _find_emailed_token(redis, fake_email, key_prefix: str, user_id) -> str | None:
+    target = str(user_id)
+    stored_hashes = {
+        key.removeprefix(key_prefix)
+        for key, value in redis.storage.items()
+        if key.startswith(key_prefix) and value == target
+    }
+
+    for sent in reversed(fake_email.sent):
+        match = _TOKEN_PATTERN.search(sent["body"])
+
+        if match and hash_token(match.group(1)) in stored_hashes:
+            return match.group(1)
+
+    return None
+
+
 @pytest_asyncio.fixture
-async def find_verification_token(redis):
+async def find_verification_token(redis, fake_email):
 
     def _find(user_id) -> str | None:
-        target = str(user_id)
-        for key, value in redis.storage.items():
-            if key.startswith("email_verify:") and value == target:
-                return key.removeprefix("email_verify:")
-        return None
+        return _find_emailed_token(redis, fake_email, "email_verify:", user_id)
 
     return _find
 
 
 @pytest_asyncio.fixture
-async def verified_user(client, register, find_verification_token):
+async def find_password_reset_token(redis, fake_email):
+
+    def _find(user_id) -> str | None:
+        return _find_emailed_token(redis, fake_email, "password_reset:", user_id)
+
+    return _find
+
+
+@pytest_asyncio.fixture
+async def get_user_by_email(db_session):
+
+    async def _get(email: str) -> User | None:
+        return await db_session.scalar(
+            select(User).where(User.email == email.strip().lower())
+        )
+
+    return _get
+
+
+@pytest_asyncio.fixture
+async def verified_user(client, register, get_user_by_email, find_verification_token):
 
     async def _make(email: str | None = None, password: str = DEFAULT_PASSWORD) -> dict:
         email, password, response = await register(email=email, password=password)
-        assert response.status_code == 201, response.text
-        user_id = response.json()["id"]
+        assert response.status_code == 202, response.text
+
+        user = await get_user_by_email(email)
+        assert user is not None
+        user_id = str(user.id)
 
         token = find_verification_token(user_id)
-        assert token is not None, "verification token was not stored in redis"
+        assert token is not None, "verification email with token was not sent"
 
         verify_response = await client.post("/auth/verify-email", json={"token": token})
         assert verify_response.status_code == 200, verify_response.text
@@ -291,16 +344,3 @@ async def auth_headers(login):
         return {"Authorization": f"Bearer {tokens['access_token']}"}
 
     return _headers
-
-
-@pytest_asyncio.fixture
-async def find_password_reset_token(redis):
-
-    def _find(user_id) -> str | None:
-        target = str(user_id)
-        for key, value in redis.storage.items():
-            if key.startswith("password_reset:") and value == target:
-                return key.removeprefix("password_reset:")
-        return None
-
-    return _find

@@ -41,14 +41,14 @@ async def test_list_sessions_excludes_revoked(
 
 
 async def test_list_sessions_excludes_expired(
-    client, verified_user, login, auth_headers, sessions_for_user, db_session
+    client, verified_user, login, auth_headers, get_session_for_token, db_session
 ):
     user = await verified_user()
-    await login(user)
+    first = await login(user)
     headers = await auth_headers(user)
 
-    sessions = await sessions_for_user(user["id"])
-    sessions[0].expires_at = utcnow() - timedelta(minutes=1)
+    session = await get_session_for_token(first["refresh_token"])
+    session.expires_at = utcnow() - timedelta(minutes=1)
     await db_session.commit()
 
     response = await client.get("/auth/sessions", headers=headers)
@@ -107,7 +107,10 @@ async def test_list_sessions_reflects_logout_all(
 
     await client.post("/auth/logout-all", headers=headers)
 
-    response = await client.get("/auth/sessions", headers=headers)
+    assert (await client.get("/auth/sessions", headers=headers)).status_code == 401
+
+    fresh = await auth_headers(user)
+    response = await client.get("/auth/sessions", headers=fresh)
 
     assert response.status_code == 200
-    assert response.json() == []
+    assert len(response.json()) == 1

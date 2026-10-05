@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sentinel.core.dependencies import get_current_user
+from sentinel.core.http import get_client_ip
 from sentinel.core.logging import log_auth_event
 from sentinel.core.rate_limiter import rate_limit
 from sentinel.database.models import User
@@ -40,10 +41,10 @@ from sentinel.services.auth import (
     revoke_all_sessions,
     list_active_sessions,
     revoke_session,
-    EmailAlreadyExistsError,
     InvalidCredentialsError,
     AccountLockedError,
     InvalidRefreshTokenError,
+    RefreshTokenReuseError,
     InvalidSessionError,
     InvalidVerificationTokenError,
     InvalidResetTokenError,
@@ -55,11 +56,13 @@ router = APIRouter(
     tags=["Authentication"],
 )
 
+REGISTER_MESSAGE = "Registration received. Check your email for further instructions."
+
 
 @router.post(
     "/register",
-    response_model=UserResponse,
-    status_code=status.HTTP_201_CREATED,
+    response_model=MessageResponse,
+    status_code=status.HTTP_202_ACCEPTED,
     dependencies=[
         Depends(
             rate_limit(
@@ -73,10 +76,9 @@ router = APIRouter(
 async def register(
     data: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)
 ):
-    try:
-        user = await register_user(db, data)
+    user = await register_user(db, data)
 
-    except EmailAlreadyExistsError:
+    if user is None:
         log_auth_event(
             "register_failed",
             request,
@@ -84,14 +86,12 @@ async def register(
             reason="email_already_exists",
             email=data.email.strip().lower(),
         )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Email already registered.",
+    else:
+        log_auth_event(
+            "register_success", request, user_id=str(user.id), email=user.email
         )
 
-    log_auth_event("register_success", request, user_id=str(user.id), email=user.email)
-
-    return user
+    return MessageResponse(message=REGISTER_MESSAGE)
 
 
 @router.post(
@@ -112,7 +112,7 @@ async def login(
     data: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)
 ):
     try:
-        user = await authenticate_user(db, data)
+        user = await authenticate_user(db, data, get_client_ip(request))
 
     except AccountLockedError:
         log_auth_event(
@@ -140,9 +140,8 @@ async def login(
             detail="Invalid email or password.",
         )
 
-    access_token = create_access_token(str(user.id))
-
-    refresh_token = await create_session(db, user)
+    session, refresh_token = await create_session(db, user)
+    access_token = create_access_token(str(user.id), str(session.id))
 
     log_auth_event("login_success", request, user_id=str(user.id), email=user.email)
 
@@ -157,9 +156,22 @@ async def refresh(
     data: RefreshTokenRequest, request: Request, db: AsyncSession = Depends(get_db)
 ):
     try:
-        user, new_refresh_token = await refresh_session(
+        user, session, new_refresh_token = await refresh_session(
             db,
             data.refresh_token,
+        )
+
+    except RefreshTokenReuseError as exc:
+        log_auth_event(
+            "refresh_token_reuse_detected",
+            request,
+            level=logging.ERROR,
+            user_id=str(exc.user_id),
+            session_id=str(exc.session_id),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token.",
         )
 
     except InvalidRefreshTokenError:
@@ -174,7 +186,7 @@ async def refresh(
             detail="Invalid refresh token.",
         )
 
-    access_token = create_access_token(str(user.id))
+    access_token = create_access_token(str(user.id), str(session.id))
 
     log_auth_event("refresh_success", request, user_id=str(user.id))
 

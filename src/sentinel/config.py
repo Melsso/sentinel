@@ -1,4 +1,19 @@
+import ipaddress
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
+
+_MIN_JWT_SECRET_LENGTH = 32
+_KNOWN_PLACEHOLDER_SECRETS = {
+    "dev-secret-change-me",
+    "change-me-to-a-real-secret",
+    "change-me",
+    "changeme",
+    "secret",
+    "ci-placeholder-secret",
+    "test-secret",
+}
+_ALLOWED_JWT_ALGORITHMS = {"HS256", "HS384", "HS512"}
 
 
 class Settings(BaseSettings):
@@ -7,9 +22,12 @@ class Settings(BaseSettings):
 
     jwt_secret: str
     jwt_algorithm: str = "HS256"
+    jwt_issuer: str = "sentinel"
+    jwt_audience: str = "sentinel-api"
 
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
+    session_absolute_lifetime_days: int = 90
 
     email_verification_expire_minutes: int = 30
     password_reset_expire_minutes: int = 30
@@ -29,6 +47,8 @@ class Settings(BaseSettings):
     login_lockout_threshold: int = 10
     login_lockout_duration_seconds: int = 900
 
+    trusted_proxies: str = ""
+
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
     log_level: str = "INFO"
@@ -43,6 +63,37 @@ class Settings(BaseSettings):
     smtp_username: str | None = None
     smtp_password: str | None = None
     smtp_use_tls: bool = True
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def _check_jwt_secret(cls, value: str) -> str:
+        if value.strip().lower() in _KNOWN_PLACEHOLDER_SECRETS:
+            raise ValueError("JWT_SECRET is a known placeholder; generate a real one.")
+        if len(value) < _MIN_JWT_SECRET_LENGTH:
+            raise ValueError(
+                f"JWT_SECRET must be at least {_MIN_JWT_SECRET_LENGTH} characters. "
+                "Generate one with: python -c "
+                '"import secrets; print(secrets.token_urlsafe(48))"'
+            )
+        return value
+
+    @field_validator("jwt_algorithm")
+    @classmethod
+    def _check_jwt_algorithm(cls, value: str) -> str:
+        if value not in _ALLOWED_JWT_ALGORITHMS:
+            raise ValueError(
+                f"JWT_ALGORITHM must be one of {sorted(_ALLOWED_JWT_ALGORITHMS)}."
+            )
+        return value
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def _check_trusted_proxies(cls, value: str) -> str:
+        for item in value.split(","):
+            item = item.strip()
+            if item:
+                ipaddress.ip_network(item, strict=False)
+        return value
 
     @property
     def cors_origins_list(self) -> list[str]:

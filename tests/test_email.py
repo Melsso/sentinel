@@ -125,7 +125,7 @@ async def test_register_sends_verification_email(client, fake_email):
     response = await client.post(
         "/auth/register", json={"email": email, "password": "Password123!"}
     )
-    assert response.status_code == 201
+    assert response.status_code == 202
 
     assert len(fake_email.sent) == 1
     sent = fake_email.sent[0]

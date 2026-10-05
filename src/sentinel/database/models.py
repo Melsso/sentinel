@@ -66,5 +66,16 @@ class Session(Base):
     user: Mapped["User"] = relationship(back_populates="sessions")
 
     expires_at: Mapped[datetime] = mapped_column(DateTime)
+    absolute_expires_at: Mapped[datetime] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class UsedRefreshToken(Base):
+    __tablename__ = "used_refresh_tokens"
+
+    token_hash: Mapped[str] = mapped_column(String(255), primary_key=True)
+    session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"), index=True
+    )
+    used_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

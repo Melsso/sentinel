@@ -12,7 +12,7 @@ async def test_revoke_session_success(client, verified_user, login, auth_headers
     headers = await auth_headers(user)
 
     listed = await client.get("/auth/sessions", headers=headers)
-    session_id = listed.json()[0]["id"]
+    session_id = listed.json()[-1]["id"]
 
     response = await client.delete(f"/auth/sessions/{session_id}", headers=headers)
 
@@ -87,7 +87,7 @@ async def test_revoke_session_leaves_other_sessions_active(
 
     sessions = (await client.get("/auth/sessions", headers=headers)).json()
     assert len(sessions) == 2
-    target_id = sessions[0]["id"]
+    target_id = sessions[-1]["id"]
 
     response = await client.delete(f"/auth/sessions/{target_id}", headers=headers)
     assert response.status_code == 204

@@ -14,11 +14,11 @@ _GENERIC_MESSAGE = (
 
 
 async def test_resend_verification_sends_new_token(
-    client, register, find_verification_token, fake_email
+    client, register, get_user_by_email, find_verification_token, fake_email
 ):
-    email, _, resp = await register(email=unique_email())
-    user_id = resp.json()["id"]
-    first_token = find_verification_token(user_id)
+    email, _, _ = await register(email=unique_email())
+    user = await get_user_by_email(email)
+    first_token = find_verification_token(user.id)
     fake_email.sent.clear()
 
     response = await client.post(
@@ -31,8 +31,10 @@ async def test_resend_verification_sends_new_token(
     assert len(fake_email.sent) == 1
     assert fake_email.sent[0]["to"] == email
 
-    second_token = find_verification_token(user_id)
+    second_token = find_verification_token(user.id)
     assert second_token is not None
+    assert second_token != first_token
+
     verify_original = await client.post(
         "/auth/verify-email", json={"token": first_token}
     )
@@ -40,13 +42,13 @@ async def test_resend_verification_sends_new_token(
 
 
 async def test_resend_verification_actually_verifies_with_new_token(
-    client, register, find_verification_token
+    client, register, get_user_by_email, find_verification_token
 ):
-    email, _, resp = await register(email=unique_email())
-    user_id = resp.json()["id"]
+    email, _, _ = await register(email=unique_email())
+    user = await get_user_by_email(email)
 
     await client.post("/auth/resend-verification-email", json={"email": email})
-    token = find_verification_token(user_id)
+    token = find_verification_token(user.id)
 
     verify = await client.post("/auth/verify-email", json={"token": token})
     assert verify.status_code == 200

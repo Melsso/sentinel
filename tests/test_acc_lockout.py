@@ -7,18 +7,29 @@ from tests.conftest import unique_email
 pytestmark = pytest.mark.asyncio
 
 
-async def test_account_locks_after_threshold_failures(client, verified_user):
-    user = await verified_user()
-    threshold = settings.login_lockout_threshold
+def _from_ip(ip: str) -> dict:
+    return {"X-Forwarded-For": ip}
 
-    for _ in range(threshold):
+
+async def _fail(client, email: str, ip: str, times: int):
+    for _ in range(times):
         response = await client.post(
-            "/auth/login", json={"email": user["email"], "password": "wrong-password"}
+            "/auth/login",
+            json={"email": email, "password": "wrong-password"},
+            headers=_from_ip(ip),
         )
         assert response.status_code == 401
 
+
+async def test_login_locks_after_threshold_failures_from_one_ip(client, verified_user):
+    user = await verified_user()
+
+    await _fail(client, user["email"], "10.1.0.1", settings.login_lockout_threshold)
+
     response = await client.post(
-        "/auth/login", json={"email": user["email"], "password": user["password"]}
+        "/auth/login",
+        json={"email": user["email"], "password": user["password"]},
+        headers=_from_ip("10.1.0.1"),
     )
     assert response.status_code == 401
 
@@ -33,10 +44,7 @@ async def test_locked_response_is_identical_to_invalid_credentials(
         "/auth/login", json={"email": user["email"], "password": "wrong-password"}
     )
 
-    for _ in range(threshold - 1):
-        await client.post(
-            "/auth/login", json={"email": user["email"], "password": "wrong-password"}
-        )
+    await _fail(client, user["email"], "127.0.0.1", threshold - 1)
 
     locked_response = await client.post(
         "/auth/login", json={"email": user["email"], "password": user["password"]}
@@ -46,24 +54,20 @@ async def test_locked_response_is_identical_to_invalid_credentials(
     assert locked_response.json() == baseline.json()
 
 
-async def test_lockout_persists_across_different_ips(client, verified_user):
+async def test_attacker_cannot_lock_the_owner_out_from_another_ip(
+    client, verified_user
+):
     user = await verified_user()
-    threshold = settings.login_lockout_threshold
 
-    for i in range(threshold):
-        await client.post(
-            "/auth/login",
-            json={"email": user["email"], "password": "wrong-password"},
-            headers={"X-Forwarded-For": f"10.1.0.{i}"},
-        )
+    await _fail(client, user["email"], "203.0.113.7", settings.login_lockout_threshold)
 
-    response = await client.post(
+    owner = await client.post(
         "/auth/login",
         json={"email": user["email"], "password": user["password"]},
-        headers={"X-Forwarded-For": "10.1.0.99"},
+        headers=_from_ip("198.51.100.20"),
     )
 
-    assert response.status_code == 401
+    assert owner.status_code == 200
 
 
 async def test_successful_login_resets_failure_count(
@@ -74,20 +78,14 @@ async def test_successful_login_resets_failure_count(
     user = await verified_user()
     threshold = settings.login_lockout_threshold
 
-    for _ in range(threshold - 1):
-        await client.post(
-            "/auth/login", json={"email": user["email"], "password": "wrong-password"}
-        )
+    await _fail(client, user["email"], "127.0.0.1", threshold - 1)
 
     success = await client.post(
         "/auth/login", json={"email": user["email"], "password": user["password"]}
     )
     assert success.status_code == 200
 
-    for _ in range(threshold - 1):
-        await client.post(
-            "/auth/login", json={"email": user["email"], "password": "wrong-password"}
-        )
+    await _fail(client, user["email"], "127.0.0.1", threshold - 1)
 
     still_works = await client.post(
         "/auth/login", json={"email": user["email"], "password": user["password"]}
@@ -98,16 +96,13 @@ async def test_successful_login_resets_failure_count(
 async def test_lockout_does_not_affect_other_accounts(client, verified_user):
     victim = await verified_user()
     bystander = await verified_user()
-    threshold = settings.login_lockout_threshold
 
-    for _ in range(threshold):
-        await client.post(
-            "/auth/login", json={"email": victim["email"], "password": "wrong-password"}
-        )
+    await _fail(client, victim["email"], "10.1.0.1", settings.login_lockout_threshold)
 
     bystander_response = await client.post(
         "/auth/login",
         json={"email": bystander["email"], "password": bystander["password"]},
+        headers=_from_ip("10.1.0.1"),
     )
 
     assert bystander_response.status_code == 200

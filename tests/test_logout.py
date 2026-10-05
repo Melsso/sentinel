@@ -129,5 +129,4 @@ async def test_logout_all_no_sessions(client, verified_user, auth_headers):
     assert first.json()["message"] == "Revoked 1 active session(s)."
 
     second = await client.post("/auth/logout-all", headers=headers)
-    assert second.status_code == 200
-    assert second.json()["message"] == "Revoked 0 active session(s)."
+    assert second.status_code == 401

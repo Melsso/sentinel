@@ -1,21 +1,29 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
-from sqlalchemy import select
+
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sentinel.core.security import (
-    password_hasher,
-    create_refresh_token,
-    hash_token,
-    create_verification_token,
-)
-from sentinel.core.redis import set_value, get_value, delete_value, get_redis
-from sentinel.core.time import utcnow
-from sentinel.core.email import send_email
-from sentinel.core.email_templates import verification_email, password_reset_email
-from sentinel.database.models import AuthProvider, User, Session
-from sentinel.schemas.auth import RegisterRequest, LoginRequest
 from sentinel.config import settings
+from sentinel.core.email import send_email
+from sentinel.core.email_templates import (
+    account_exists_email,
+    password_reset_email,
+    verification_email,
+)
+from sentinel.core.redis import consume_value, get_redis, incr_with_ttl, set_value
+from sentinel.core.security import (
+    DUMMY_PASSWORD_HASH,
+    create_refresh_token,
+    create_verification_token,
+    hash_password,
+    hash_token,
+    verify_password,
+)
+from sentinel.core.time import utcnow
+from sentinel.database.models import AuthProvider, Session, UsedRefreshToken, User
+from sentinel.schemas.auth import LoginRequest, RegisterRequest
 
 
 class EmailAlreadyExistsError(Exception):
@@ -34,6 +42,13 @@ class InvalidRefreshTokenError(Exception):
     pass
 
 
+class RefreshTokenReuseError(InvalidRefreshTokenError):
+    def __init__(self, user_id: UUID, session_id: UUID) -> None:
+        super().__init__("refresh token reuse detected")
+        self.user_id = user_id
+        self.session_id = session_id
+
+
 class InvalidSessionError(Exception):
     pass
 
@@ -46,72 +61,104 @@ class InvalidResetTokenError(Exception):
     pass
 
 
-async def register_user(db: AsyncSession, data: RegisterRequest) -> User:
+async def register_user(db: AsyncSession, data: RegisterRequest) -> User | None:
     email = data.email.strip().lower()
+    password_hash = await hash_password(data.password)
 
     existing = await db.scalar(select(User).where(User.email == email))
 
-    if existing is not None:
-        raise EmailAlreadyExistsError()
+    if existing is None:
+        user = User(
+            email=email,
+            password_hash=password_hash,
+            provider=AuthProvider.LOCAL,
+            date_of_birth=data.date_of_birth,
+            is_deleted=False,
+        )
+        db.add(user)
 
-    user = User(
-        email=email,
-        password_hash=password_hasher.hash(data.password),
-        provider=AuthProvider.LOCAL,
-        date_of_birth=data.date_of_birth,
-        is_deleted=False,
-    )
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            existing = await db.scalar(select(User).where(User.email == email))
 
-    await create_email_verification_token(user)
+            if existing is None:
+                raise
+        else:
+            await db.refresh(user)
+            await create_email_verification_token(user)
+            return user
 
-    return user
+    await _notify_existing_account(existing)
+
+    return None
+
+
+async def _notify_existing_account(user: User) -> None:
+    if not user.is_verified and not user.is_deleted:
+        await create_email_verification_token(user)
+        return
+
+    subject, body = account_exists_email()
+    await send_email(user.email, subject, body)
 
 
 _LOCKOUT_KEY_PREFIX = "login_lockout"
 _FAILURE_KEY_PREFIX = "login_failures"
 
 
-async def _is_account_locked(email: str) -> bool:
+def _lockout_key(email: str, client_ip: str) -> str:
+    return f"{_LOCKOUT_KEY_PREFIX}:{email}:{client_ip}"
+
+
+def _failure_key(email: str, client_ip: str) -> str:
+    return f"{_FAILURE_KEY_PREFIX}:{email}:{client_ip}"
+
+
+async def _is_account_locked(email: str, client_ip: str) -> bool:
+    return bool(await get_redis().exists(_lockout_key(email, client_ip)))
+
+
+async def _register_failed_login(email: str, client_ip: str) -> None:
     redis_client = get_redis()
+    failure_key = _failure_key(email, client_ip)
 
-    return bool(await redis_client.exists(f"{_LOCKOUT_KEY_PREFIX}:{email}"))
-
-
-async def _register_failed_login(email: str) -> None:
-    redis_client = get_redis()
-    key = f"{_FAILURE_KEY_PREFIX}:{email}"
-
-    count = await redis_client.incr(key)
-
-    if count == 1:
-        await redis_client.expire(key, settings.login_lockout_duration_seconds)
+    count = await incr_with_ttl(failure_key, settings.login_lockout_duration_seconds)
 
     if count >= settings.login_lockout_threshold:
         await redis_client.set(
-            f"{_LOCKOUT_KEY_PREFIX}:{email}",
+            _lockout_key(email, client_ip),
             "1",
             ex=settings.login_lockout_duration_seconds,
         )
-        await redis_client.delete(key)
+        await redis_client.delete(failure_key)
 
 
-async def _clear_login_failures(email: str) -> None:
+async def _clear_login_failures(email: str, client_ip: str) -> None:
     redis_client = get_redis()
 
-    await redis_client.delete(f"{_FAILURE_KEY_PREFIX}:{email}")
-    await redis_client.delete(f"{_LOCKOUT_KEY_PREFIX}:{email}")
+    await redis_client.delete(_failure_key(email, client_ip))
+    await redis_client.delete(_lockout_key(email, client_ip))
 
 
-async def authenticate_user(db: AsyncSession, data: LoginRequest) -> User:
+async def authenticate_user(
+    db: AsyncSession, data: LoginRequest, client_ip: str
+) -> User:
     email = data.email.strip().lower()
 
-    if await _is_account_locked(email):
-        raise AccountLockedError()
-
+    locked = await _is_account_locked(email, client_ip)
     user = await db.scalar(select(User).where(User.email == email))
+
+    stored_hash = (
+        user.password_hash
+        if user is not None and user.password_hash is not None
+        else DUMMY_PASSWORD_HASH
+    )
+    password_ok = await verify_password(data.password, stored_hash)
+
+    if locked:
+        raise AccountLockedError()
 
     if (
         user is None
@@ -121,42 +168,79 @@ async def authenticate_user(db: AsyncSession, data: LoginRequest) -> User:
     ):
         raise InvalidCredentialsError()
 
-    if not password_hasher.verify(data.password, user.password_hash):
-        await _register_failed_login(email)
+    if not password_ok:
+        await _register_failed_login(email, client_ip)
         raise InvalidCredentialsError()
 
-    await _clear_login_failures(email)
+    await _clear_login_failures(email, client_ip)
 
     return user
 
 
-async def create_session(db: AsyncSession, user: User) -> str:
+def _session_expiry(now: datetime, absolute_expires_at: datetime) -> datetime:
+    return min(
+        now + timedelta(days=settings.refresh_token_expire_days),
+        absolute_expires_at,
+    )
+
+
+async def create_session(db: AsyncSession, user: User) -> tuple[Session, str]:
     refresh_token = create_refresh_token()
+    now = utcnow()
+    absolute_expires_at = now + timedelta(days=settings.session_absolute_lifetime_days)
 
     session = Session(
         user_id=user.id,
         refresh_token_hash=hash_token(refresh_token),
-        expires_at=utcnow() + timedelta(days=settings.refresh_token_expire_days),
+        expires_at=_session_expiry(now, absolute_expires_at),
+        absolute_expires_at=absolute_expires_at,
     )
 
     db.add(session)
 
     await db.commit()
 
-    return refresh_token
+    return session, refresh_token
 
 
-async def refresh_session(db: AsyncSession, refresh_token: str) -> tuple[User, str]:
+async def _detect_reuse(db: AsyncSession, token_hash: str) -> None:
+    used = await db.scalar(
+        select(UsedRefreshToken).where(UsedRefreshToken.token_hash == token_hash)
+    )
+
+    if used is None:
+        return
+
+    session = await db.get(Session, used.session_id)
+
+    if session is None:
+        return
+
+    if session.revoked_at is None:
+        session.revoked_at = utcnow()
+        await db.commit()
+
+    raise RefreshTokenReuseError(session.user_id, session.id)
+
+
+async def refresh_session(
+    db: AsyncSession, refresh_token: str
+) -> tuple[User, Session, str]:
     token_hash = hash_token(refresh_token)
+    now = utcnow()
 
     session = await db.scalar(
         select(Session).where(Session.refresh_token_hash == token_hash)
     )
 
+    if session is None:
+        await _detect_reuse(db, token_hash)
+        raise InvalidRefreshTokenError()
+
     if (
-        session is None
-        or session.revoked_at is not None
-        or session.expires_at < utcnow()
+        session.revoked_at is not None
+        or session.expires_at < now
+        or session.absolute_expires_at < now
     ):
         raise InvalidRefreshTokenError()
 
@@ -167,13 +251,32 @@ async def refresh_session(db: AsyncSession, refresh_token: str) -> tuple[User, s
 
     new_refresh_token = create_refresh_token()
 
-    session.refresh_token_hash = hash_token(new_refresh_token)
+    result = await db.execute(
+        update(Session)
+        .where(
+            Session.id == session.id,
+            Session.refresh_token_hash == token_hash,
+            Session.revoked_at.is_(None),
+        )
+        .values(
+            refresh_token_hash=hash_token(new_refresh_token),
+            expires_at=_session_expiry(now, session.absolute_expires_at),
+        )
+        .returning(Session.id)
+        .execution_options(synchronize_session=False)
+    )
 
-    session.expires_at = utcnow() + timedelta(days=settings.refresh_token_expire_days)
+    if result.scalar_one_or_none() is None:
+        await db.rollback()
+        await _detect_reuse(db, token_hash)
+        raise InvalidRefreshTokenError()
+
+    db.add(UsedRefreshToken(token_hash=token_hash, session_id=session.id, used_at=now))
 
     await db.commit()
+    await db.refresh(session)
 
-    return user, new_refresh_token
+    return user, session, new_refresh_token
 
 
 async def logout_user(db: AsyncSession, refresh_token: str) -> UUID:
@@ -198,7 +301,7 @@ async def create_email_verification_token(user: User) -> str:
     token = create_verification_token()
 
     await set_value(
-        f"email_verify:{token}",
+        f"email_verify:{hash_token(token)}",
         str(user.id),
         settings.email_verification_expire_minutes * 60,
     )
@@ -210,7 +313,7 @@ async def create_email_verification_token(user: User) -> str:
 
 
 async def verify_email(db: AsyncSession, token: str) -> User:
-    user_id = await get_value(f"email_verify:{token}")
+    user_id = await consume_value(f"email_verify:{hash_token(token)}")
 
     if user_id is None:
         raise InvalidVerificationTokenError()
@@ -226,8 +329,6 @@ async def verify_email(db: AsyncSession, token: str) -> User:
         raise InvalidVerificationTokenError()
 
     user.is_verified = True
-
-    await delete_value(f"email_verify:{token}")
 
     await db.commit()
     await db.refresh(user)
@@ -254,12 +355,15 @@ async def resend_verification_email(db: AsyncSession, email: str) -> bool:
 
 
 async def list_active_sessions(db: AsyncSession, user: User) -> list[Session]:
+    now = utcnow()
+
     result = await db.scalars(
         select(Session)
         .where(
             Session.user_id == user.id,
             Session.revoked_at.is_(None),
-            Session.expires_at > utcnow(),
+            Session.expires_at > now,
+            Session.absolute_expires_at > now,
         )
         .order_by(Session.created_at.desc())
     )
@@ -305,7 +409,7 @@ async def create_password_reset_token(user: User) -> str:
     token = create_verification_token()
 
     await set_value(
-        f"password_reset:{token}",
+        f"password_reset:{hash_token(token)}",
         str(user.id),
         settings.password_reset_expire_minutes * 60,
     )
@@ -330,7 +434,7 @@ async def request_password_reset(db: AsyncSession, email: str) -> bool:
 
 
 async def reset_password(db: AsyncSession, token: str, new_password: str) -> UUID:
-    user_id = await get_value(f"password_reset:{token}")
+    user_id = await consume_value(f"password_reset:{hash_token(token)}")
 
     if user_id is None:
         raise InvalidResetTokenError()
@@ -345,9 +449,8 @@ async def reset_password(db: AsyncSession, token: str, new_password: str) -> UUI
     if user is None or user.is_deleted:
         raise InvalidResetTokenError()
 
-    user.password_hash = password_hasher.hash(new_password)
+    user.password_hash = await hash_password(new_password)
 
-    await delete_value(f"password_reset:{token}")
     await revoke_all_sessions(db, user, commit=False)
 
     await db.commit()
@@ -358,12 +461,12 @@ async def reset_password(db: AsyncSession, token: str, new_password: str) -> UUI
 async def change_password(
     db: AsyncSession, user: User, current_password: str, new_password: str
 ) -> None:
-    if user.password_hash is None or not password_hasher.verify(
+    if user.password_hash is None or not await verify_password(
         current_password, user.password_hash
     ):
         raise InvalidCredentialsError()
 
-    user.password_hash = password_hasher.hash(new_password)
+    user.password_hash = await hash_password(new_password)
 
     await revoke_all_sessions(db, user, commit=False)
 
@@ -372,7 +475,7 @@ async def change_password(
 
 async def delete_account(db: AsyncSession, user: User, password: str) -> None:
     if user.provider == AuthProvider.LOCAL:
-        if user.password_hash is None or not password_hasher.verify(
+        if user.password_hash is None or not await verify_password(
             password, user.password_hash
         ):
             raise InvalidCredentialsError()

@@ -44,7 +44,7 @@ async def test_login_unknown_email(client):
 
 async def test_login_unverified_user_rejected(client, register):
     email, password, resp = await register()
-    assert resp.status_code == 201
+    assert resp.status_code == 202
 
     response = await client.post(
         "/auth/login",

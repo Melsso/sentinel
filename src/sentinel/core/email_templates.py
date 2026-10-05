@@ -29,3 +29,18 @@ def password_reset_email(token: str) -> tuple[str, str]:
     )
 
     return subject, body
+
+
+def account_exists_email() -> tuple[str, str]:
+    link = f"{settings.frontend_url}/forgot-password"
+
+    subject = "Someone tried to register with your email"
+    body = (
+        "Someone just tried to create an account with this email address, "
+        "but an account already exists.\n\n"
+        "If that was you, log in as usual, or reset your password here:"
+        f"\n\n{link}\n\n"
+        "If it wasn't you, you can safely ignore this email."
+    )
+
+    return subject, body

@@ -144,7 +144,7 @@ async def test_register_blocked_after_too_many_attempts(client):
             "/auth/register",
             json={"email": unique_email(), "password": "Password123!"},
         )
-        assert response.status_code == 201
+        assert response.status_code == 202
 
     blocked = await client.post(
         "/auth/register",

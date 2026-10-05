@@ -78,7 +78,7 @@ async def test_deleted_account_cannot_login(client, verified_user, auth_headers)
     assert login_response.status_code == 401
 
 
-async def test_deleted_account_blocks_reregistration(
+async def test_deleted_account_cannot_be_taken_over_by_reregistering(
     client, verified_user, auth_headers
 ):
     user = await verified_user()
@@ -92,5 +92,10 @@ async def test_deleted_account_blocks_reregistration(
         "/auth/register",
         json={"email": user["email"], "password": "AnotherPassword123!"},
     )
+    assert register_response.status_code == 202
 
-    assert register_response.status_code == 409
+    login_response = await client.post(
+        "/auth/login",
+        json={"email": user["email"], "password": "AnotherPassword123!"},
+    )
+    assert login_response.status_code == 401

@@ -5,7 +5,7 @@ from fastapi import HTTPException, Request, status
 from sentinel.config import settings
 from sentinel.core.http import get_client_ip
 from sentinel.core.logging import log_auth_event
-from sentinel.core.redis import get_redis
+from sentinel.core.redis import incr_with_ttl
 
 
 def rate_limit(scope: str, limit_attr: str, window_attr: str, by_email: bool = False):
@@ -14,8 +14,7 @@ def rate_limit(scope: str, limit_attr: str, window_attr: str, by_email: bool = F
         limit = getattr(settings, limit_attr)
         window_seconds = getattr(settings, window_attr)
 
-        redis_client = get_redis()
-        keys = [f"ratelimit:{scope}:ip:{get_client_ip(request)}"]
+        keys = [("ip", f"ratelimit:{scope}:ip:{get_client_ip(request)}")]
 
         if by_email:
             try:
@@ -26,13 +25,12 @@ def rate_limit(scope: str, limit_attr: str, window_attr: str, by_email: bool = F
             email = body.get("email") if isinstance(body, dict) else None
 
             if email:
-                keys.append(f"ratelimit:{scope}:email:{str(email).strip().lower()}")
+                keys.append(
+                    ("email", f"ratelimit:{scope}:email:{str(email).strip().lower()}")
+                )
 
-        for key in keys:
-            count = await redis_client.incr(key)
-
-            if count == 1:
-                await redis_client.expire(key, window_seconds)
+        for kind, key in keys:
+            count = await incr_with_ttl(key, window_seconds)
 
             if count > limit:
                 log_auth_event(
@@ -40,7 +38,7 @@ def rate_limit(scope: str, limit_attr: str, window_attr: str, by_email: bool = F
                     request,
                     level=logging.WARNING,
                     scope=scope,
-                    limit_key=key,
+                    limit_type=kind,
                 )
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,

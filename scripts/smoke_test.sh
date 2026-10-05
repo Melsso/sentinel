@@ -27,13 +27,11 @@ pass "app, Postgres, and Redis are all reachable"
 
 echo
 echo "== 2. Register =="
-REGISTER=$(curl -s -X POST "$BASE_URL/auth/register" \
+REGISTER_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/auth/register" \
   -H "Content-Type: application/json" \
   -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}")
-echo "$REGISTER" | jq .
-USER_ID=$(echo "$REGISTER" | jq -r .id)
-[ "$USER_ID" != "null" ] || fail "registration did not return a user id"
-pass "registered user $USER_ID"
+[ "$REGISTER_STATUS" = "202" ] || fail "registration did not return 202 (got $REGISTER_STATUS)"
+pass "registration accepted"
 
 echo
 echo "== 3. Pull the verification token out of the app's logs =="
