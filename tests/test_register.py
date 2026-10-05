@@ -1,6 +1,6 @@
 import pytest
 from sqlalchemy import func, select
-
+from fastapi import BackgroundTasks
 from sentinel.core.security import hash_token, password_hasher
 from sentinel.database.models import User
 from sentinel.routes.auth import REGISTER_MESSAGE
@@ -163,10 +163,15 @@ async def test_register_race_on_unique_email_is_treated_as_existing(
         return await real_scalar(*args, **kwargs)
 
     monkeypatch.setattr(db_session, "scalar", flaky_scalar)
-
+    background = BackgroundTasks()
     result = await register_user(
-        db_session, RegisterRequest(email=existing.email, password="Password123!")
+        db_session,
+        RegisterRequest(email=existing.email, password="Password123!"),
+        background,
     )
 
     assert result is None
+
+    await background()
+
     assert len(fake_email.sent) == 1

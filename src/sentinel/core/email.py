@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from email.message import EmailMessage
 from typing import Protocol
@@ -5,6 +6,7 @@ from typing import Protocol
 import aiosmtplib
 
 from sentinel.config import settings
+from sentinel.core.logging import hash_email
 
 
 email_logger = logging.getLogger("sentinel.email")
@@ -81,21 +83,49 @@ def get_email_sender() -> EmailSender:
                 use_tls=settings.smtp_use_tls,
                 from_address=settings.email_from,
             )
-        else:
+        elif settings.email_backend == "console":
+            if not settings.allow_console_email:
+                raise RuntimeError(
+                    "EMAIL_BACKEND=console logs emails (including verification and "
+                    "reset links) instead of sending them and is for local "
+                    "development only. Use EMAIL_BACKEND=smtp, or set "
+                    "ALLOW_CONSOLE_EMAIL=true to use it deliberately."
+                )
+
             _sender = ConsoleEmailSender()
+        else:
+            raise RuntimeError(
+                f"Unknown EMAIL_BACKEND {settings.email_backend!r} "
+                "(expected 'smtp' or 'console')."
+            )
 
     return _sender
 
 
 async def send_email(to: str, subject: str, body: str) -> None:
-    try:
-        await get_email_sender().send(to, subject, body)
-    except Exception:
-        email_logger.exception(
-            "email_send_failed",
-            extra={
-                "event": "email_send_failed",
-                "backend": settings.email_backend,
-                "to": to,
-            },
-        )
+    attempts = max(1, settings.email_send_attempts)
+
+    for attempt in range(1, attempts + 1):
+        try:
+            await get_email_sender().send(to, subject, body)
+            return
+        except Exception:
+            final = attempt == attempts
+
+            email_logger.log(
+                logging.ERROR if final else logging.WARNING,
+                "email_send_failed",
+                extra={
+                    "event": "email_send_failed",
+                    "backend": settings.email_backend,
+                    "to_hash": hash_email(to),
+                    "attempt": attempt,
+                    "final": final,
+                },
+                exc_info=True,
+            )
+
+            if not final:
+                await asyncio.sleep(
+                    settings.email_retry_base_delay_seconds * 2 ** (attempt - 1)
+                )

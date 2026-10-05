@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
     session_absolute_lifetime_days: int = 90
+    session_retention_days: int = 7
+    session_purge_interval_seconds: int = 3600
+
+    log_pii: bool = False
+
+    allow_console_email: bool = False
+    email_send_attempts: int = 3
+    email_retry_base_delay_seconds: float = 1.0
 
     email_verification_expire_minutes: int = 30
     password_reset_expire_minutes: int = 30

@@ -4,8 +4,9 @@ import sys
 from typing import Any
 
 from fastapi import Request
-
+import hashlib
 from sentinel.core.http import get_client_ip
+from sentinel.config import settings
 
 
 _STANDARD_LOG_RECORD_ATTRS = {
@@ -32,6 +33,10 @@ _STANDARD_LOG_RECORD_ATTRS = {
     "message",
     "taskName",
 }
+
+
+def hash_email(email: str) -> str:
+    return hashlib.sha256(email.strip().lower().encode()).hexdigest()[:16]
 
 
 class JsonFormatter(logging.Formatter):
@@ -69,6 +74,14 @@ def log_auth_event(
     event: str, request: Request, *, level: int = logging.INFO, **fields: Any
 ) -> None:
     payload = dict(fields)
+
+    email = payload.pop("email", None)
+    if email is not None:
+        if settings.log_pii:
+            payload["email"] = email
+        else:
+            payload["email_hash"] = hash_email(str(email))
+
     payload["event"] = event
     payload["ip"] = get_client_ip(request)
 

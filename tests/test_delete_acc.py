@@ -78,8 +78,8 @@ async def test_deleted_account_cannot_login(client, verified_user, auth_headers)
     assert login_response.status_code == 401
 
 
-async def test_deleted_account_cannot_be_taken_over_by_reregistering(
-    client, verified_user, auth_headers
+async def test_delete_account_anonymizes_user_and_removes_sessions(
+    client, verified_user, auth_headers, get_user, sessions_for_user
 ):
     user = await verified_user()
     headers = await auth_headers(user)
@@ -88,14 +88,29 @@ async def test_deleted_account_cannot_be_taken_over_by_reregistering(
         "DELETE", "/auth/me", headers=headers, json={"password": user["password"]}
     )
 
-    register_response = await client.post(
+    deleted = await get_user(user["id"])
+    assert deleted.email != user["email"]
+    assert deleted.password_hash is None
+    assert deleted.is_deleted is True
+    assert await sessions_for_user(user["id"]) == []
+
+
+async def test_email_can_be_reregistered_after_deletion(
+    client, verified_user, auth_headers, get_user_by_email
+):
+    user = await verified_user()
+    headers = await auth_headers(user)
+
+    await client.request(
+        "DELETE", "/auth/me", headers=headers, json={"password": user["password"]}
+    )
+
+    response = await client.post(
         "/auth/register",
         json={"email": user["email"], "password": "AnotherPassword123!"},
     )
-    assert register_response.status_code == 202
+    assert response.status_code == 202
 
-    login_response = await client.post(
-        "/auth/login",
-        json={"email": user["email"], "password": "AnotherPassword123!"},
-    )
-    assert login_response.status_code == 401
+    new_user = await get_user_by_email(user["email"])
+    assert new_user is not None
+    assert str(new_user.id) != user["id"]

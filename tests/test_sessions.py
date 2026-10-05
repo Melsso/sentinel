@@ -22,7 +22,14 @@ async def test_list_sessions_returns_active_sessions(
     sessions = response.json()
     assert len(sessions) == 3
     for session in sessions:
-        assert set(session.keys()) == {"id", "created_at", "expires_at"}
+        assert set(session.keys()) == {
+            "id",
+            "created_at",
+            "expires_at",
+            "ip_address",
+            "user_agent",
+            "is_current",
+        }
 
 
 async def test_list_sessions_excludes_revoked(
@@ -114,3 +121,21 @@ async def test_list_sessions_reflects_logout_all(
 
     assert response.status_code == 200
     assert len(response.json()) == 1
+
+
+async def test_list_sessions_marks_current_and_records_client(
+    client, verified_user, login
+):
+    user = await verified_user()
+    await login(user)
+    tokens = await login(user)
+
+    response = await client.get(
+        "/auth/sessions", headers={"Authorization": f"Bearer {tokens['access_token']}"}
+    )
+    sessions = response.json()
+
+    assert len(sessions) == 2
+    assert sum(1 for s in sessions if s["is_current"]) == 1
+    assert all(s["ip_address"] == "127.0.0.1" for s in sessions)
+    assert all(s["user_agent"] for s in sessions)

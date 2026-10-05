@@ -1,10 +1,10 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sentinel.core.dependencies import get_current_user
+from sentinel.core.dependencies import AuthContext, get_auth_context, get_current_user
 from sentinel.core.http import get_client_ip
 from sentinel.core.logging import log_auth_event
 from sentinel.core.rate_limiter import rate_limit
@@ -74,9 +74,12 @@ REGISTER_MESSAGE = "Registration received. Check your email for further instruct
     ],
 )
 async def register(
-    data: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)
+    data: RegisterRequest,
+    request: Request,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
 ):
-    user = await register_user(db, data)
+    user = await register_user(db, data, background)
 
     if user is None:
         log_auth_event(
@@ -111,8 +114,9 @@ async def register(
 async def login(
     data: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)
 ):
+    client_ip = get_client_ip(request)
     try:
-        user = await authenticate_user(db, data, get_client_ip(request))
+        user = await authenticate_user(db, data, client_ip)
 
     except AccountLockedError:
         log_auth_event(
@@ -140,7 +144,9 @@ async def login(
             detail="Invalid email or password.",
         )
 
-    session, refresh_token = await create_session(db, user)
+    session, refresh_token = await create_session(
+        db, user, client_ip, request.headers.get("user-agent")
+    )
     access_token = create_access_token(str(user.id), str(session.id))
 
     log_auth_event("login_success", request, user_id=str(user.id), email=user.email)
@@ -259,9 +265,10 @@ async def verify_email_route(
 async def resend_verification_email_route(
     data: ResendVerificationEmailRequest,
     request: Request,
+    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
-    email_sent = await resend_verification_email(db, data.email)
+    email_sent = await resend_verification_email(db, data.email, background)
 
     log_auth_event(
         "verification_email_resend_requested",
@@ -285,10 +292,22 @@ async def me(current_user: User = Depends(get_current_user)):
 
 @router.get("/sessions", response_model=list[SessionResponse])
 async def list_sessions(
-    current_user: User = Depends(get_current_user),
+    auth: AuthContext = Depends(get_auth_context),
     db: AsyncSession = Depends(get_db),
 ):
-    return await list_active_sessions(db, current_user)
+    sessions = await list_active_sessions(db, auth.user)
+
+    return [
+        SessionResponse(
+            id=s.id,
+            created_at=s.created_at,
+            expires_at=s.expires_at,
+            ip_address=s.ip_address,
+            user_agent=s.user_agent,
+            is_current=s.id == auth.session.id,
+        )
+        for s in sessions
+    ]
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -347,9 +366,12 @@ async def logout_all(
     ],
 )
 async def forgot_password(
-    data: ForgotPasswordRequest, request: Request, db: AsyncSession = Depends(get_db)
+    data: ForgotPasswordRequest,
+    request: Request,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
 ):
-    account_found = await request_password_reset(db, data.email)
+    account_found = await request_password_reset(db, data.email, background)
 
     log_auth_event(
         "password_reset_requested",

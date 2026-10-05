@@ -1,8 +1,8 @@
 import pytest
 
 from sentinel.core.security import password_hasher
-from sentinel.database.models import AuthProvider
 from tests.conftest import unique_email
+from sentinel.config import settings
 
 
 pytestmark = pytest.mark.asyncio
@@ -30,17 +30,6 @@ async def test_forgot_password_unknown_email_same_response(client, redis):
         "If that email is registered, a password reset link has been sent."
     )
     assert not any(k.startswith("password_reset:") for k in redis.storage)
-
-
-async def test_forgot_password_oauth_account_no_token(
-    client, make_db_user, find_password_reset_token
-):
-    user = await make_db_user(provider=AuthProvider.GOOGLE, provider_user_id="sub-123")
-
-    response = await client.post("/auth/forgot-password", json={"email": user.email})
-
-    assert response.status_code == 200
-    assert find_password_reset_token(user.id) is None
 
 
 async def test_forgot_password_deleted_account_no_token(
@@ -147,3 +136,32 @@ async def test_reset_password_can_login_with_new_password(
     )
 
     assert login_response.status_code == 200
+
+
+async def test_reset_password_clears_lockout(
+    client, verified_user, find_password_reset_token
+):
+    user = await verified_user()
+
+    for _ in range(settings.login_lockout_threshold):
+        await client.post(
+            "/auth/login", json={"email": user["email"], "password": "wrong-password"}
+        )
+
+    locked = await client.post(
+        "/auth/login", json={"email": user["email"], "password": user["password"]}
+    )
+    assert locked.status_code == 401
+
+    await client.post("/auth/forgot-password", json={"email": user["email"]})
+    token = find_password_reset_token(user["id"])
+    reset = await client.post(
+        "/auth/reset-password",
+        json={"token": token, "new_password": "NewPassword123!"},
+    )
+    assert reset.status_code == 200
+
+    login = await client.post(
+        "/auth/login", json={"email": user["email"], "password": "NewPassword123!"}
+    )
+    assert login.status_code == 200

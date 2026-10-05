@@ -1,6 +1,5 @@
 import pytest
 
-from sentinel.database.models import AuthProvider
 from sentinel.core.security import password_hasher
 from tests.conftest import unique_email
 
@@ -87,24 +86,6 @@ async def test_resend_verification_deleted_account_no_email(
         password_hash=password_hasher.hash("Password123!"),
         is_verified=False,
         is_deleted=True,
-    )
-
-    response = await client.post(
-        "/auth/resend-verification-email", json={"email": user.email}
-    )
-
-    assert response.status_code == 200
-    assert response.json()["message"] == _GENERIC_MESSAGE
-    assert len(fake_email.sent) == 0
-
-
-async def test_resend_verification_oauth_account_no_email(
-    client, make_db_user, fake_email
-):
-    user = await make_db_user(
-        provider=AuthProvider.GOOGLE,
-        provider_user_id="sub-123",
-        is_verified=False,
     )
 
     response = await client.post(

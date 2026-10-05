@@ -13,6 +13,20 @@ jobs:
   ci:
     runs-on: ubuntu-latest
 
+    services:
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      INTEGRATION_REDIS_URL: redis://localhost:6379/1
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,3 +63,28 @@ jobs:
 
       - name: Run pip-audit
         run: poetry run pip-audit
+
+  smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create ENV
+        run: |
+          echo "JWT_SECRET=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" > .env
+
+      - name: Start
+        run: docker compose up --build -d --wait
+
+      - name: Run Smoke Test
+        run: ./scripts/smoke_test.sh
+
+      - name: Dump Logs
+        if: failure()
+        run: docker compose logs app
+
+      - name: Stop
+        if: always()
+        run: docker compose down -v

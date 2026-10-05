@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select, update
+from fastapi import BackgroundTasks
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +23,7 @@ from sentinel.core.security import (
     verify_password,
 )
 from sentinel.core.time import utcnow
-from sentinel.database.models import AuthProvider, Session, UsedRefreshToken, User
+from sentinel.database.models import Session, UsedRefreshToken, User
 from sentinel.schemas.auth import LoginRequest, RegisterRequest
 
 
@@ -61,20 +62,16 @@ class InvalidResetTokenError(Exception):
     pass
 
 
-async def register_user(db: AsyncSession, data: RegisterRequest) -> User | None:
+async def register_user(
+    db: AsyncSession, data: RegisterRequest, background: BackgroundTasks
+) -> User | None:
     email = data.email.strip().lower()
     password_hash = await hash_password(data.password)
 
     existing = await db.scalar(select(User).where(User.email == email))
 
     if existing is None:
-        user = User(
-            email=email,
-            password_hash=password_hash,
-            provider=AuthProvider.LOCAL,
-            date_of_birth=data.date_of_birth,
-            is_deleted=False,
-        )
+        user = User(email=email, password_hash=password_hash, is_deleted=False)
         db.add(user)
 
         try:
@@ -87,21 +84,30 @@ async def register_user(db: AsyncSession, data: RegisterRequest) -> User | None:
                 raise
         else:
             await db.refresh(user)
-            await create_email_verification_token(user)
+            await create_email_verification_token(user, background)
             return user
 
-    await _notify_existing_account(existing)
+    await _notify_existing_account(existing, background)
 
     return None
 
 
-async def _notify_existing_account(user: User) -> None:
+async def _notify_existing_account(user: User, background: BackgroundTasks) -> None:
     if not user.is_verified and not user.is_deleted:
-        await create_email_verification_token(user)
+        await create_email_verification_token(user, background)
         return
 
     subject, body = account_exists_email()
-    await send_email(user.email, subject, body)
+    background.add_task(send_email, user.email, subject, body)
+
+
+async def _clear_all_login_failures(email: str) -> None:
+    redis_client = get_redis()
+    escaped = "".join(f"\\{c}" if c in "\\*?[]" else c for c in email)
+
+    for prefix in (_FAILURE_KEY_PREFIX, _LOCKOUT_KEY_PREFIX):
+        async for key in redis_client.scan_iter(match=f"{prefix}:{escaped}:*"):
+            await redis_client.delete(key)
 
 
 _LOCKOUT_KEY_PREFIX = "login_lockout"
@@ -184,7 +190,12 @@ def _session_expiry(now: datetime, absolute_expires_at: datetime) -> datetime:
     )
 
 
-async def create_session(db: AsyncSession, user: User) -> tuple[Session, str]:
+async def create_session(
+    db: AsyncSession,
+    user: User,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
+) -> tuple[Session, str]:
     refresh_token = create_refresh_token()
     now = utcnow()
     absolute_expires_at = now + timedelta(days=settings.session_absolute_lifetime_days)
@@ -192,6 +203,8 @@ async def create_session(db: AsyncSession, user: User) -> tuple[Session, str]:
     session = Session(
         user_id=user.id,
         refresh_token_hash=hash_token(refresh_token),
+        ip_address=ip_address,
+        user_agent=user_agent[:512] if user_agent else None,
         expires_at=_session_expiry(now, absolute_expires_at),
         absolute_expires_at=absolute_expires_at,
     )
@@ -297,7 +310,9 @@ async def logout_user(db: AsyncSession, refresh_token: str) -> UUID:
     return session.user_id
 
 
-async def create_email_verification_token(user: User) -> str:
+async def create_email_verification_token(
+    user: User, background: BackgroundTasks
+) -> str:
     token = create_verification_token()
 
     await set_value(
@@ -307,7 +322,7 @@ async def create_email_verification_token(user: User) -> str:
     )
 
     subject, body = verification_email(token)
-    await send_email(user.email, subject, body)
+    background.add_task(send_email, user.email, subject, body)
 
     return token
 
@@ -336,20 +351,17 @@ async def verify_email(db: AsyncSession, token: str) -> User:
     return user
 
 
-async def resend_verification_email(db: AsyncSession, email: str) -> bool:
+async def resend_verification_email(
+    db: AsyncSession, email: str, background: BackgroundTasks
+) -> bool:
     normalized_email = email.strip().lower()
 
     user = await db.scalar(select(User).where(User.email == normalized_email))
 
-    if (
-        user is None
-        or user.is_deleted
-        or user.is_verified
-        or user.provider != AuthProvider.LOCAL
-    ):
+    if user is None or user.is_deleted or user.is_verified:
         return False
 
-    await create_email_verification_token(user)
+    await create_email_verification_token(user, background)
 
     return True
 
@@ -405,7 +417,7 @@ async def revoke_all_sessions(db: AsyncSession, user: User, commit: bool = True)
     return len(sessions)
 
 
-async def create_password_reset_token(user: User) -> str:
+async def create_password_reset_token(user: User, background: BackgroundTasks) -> str:
     token = create_verification_token()
 
     await set_value(
@@ -415,20 +427,22 @@ async def create_password_reset_token(user: User) -> str:
     )
 
     subject, body = password_reset_email(token)
-    await send_email(user.email, subject, body)
+    background.add_task(send_email, user.email, subject, body)
 
     return token
 
 
-async def request_password_reset(db: AsyncSession, email: str) -> bool:
+async def request_password_reset(
+    db: AsyncSession, email: str, background: BackgroundTasks
+) -> bool:
     normalized_email = email.strip().lower()
 
     user = await db.scalar(select(User).where(User.email == normalized_email))
 
-    if user is None or user.is_deleted or user.provider != AuthProvider.LOCAL:
+    if user is None or user.is_deleted:
         return False
 
-    await create_password_reset_token(user)
+    await create_password_reset_token(user, background)
 
     return True
 
@@ -455,6 +469,8 @@ async def reset_password(db: AsyncSession, token: str, new_password: str) -> UUI
 
     await db.commit()
 
+    await _clear_all_login_failures(user.email)
+
     return user.id
 
 
@@ -474,14 +490,45 @@ async def change_password(
 
 
 async def delete_account(db: AsyncSession, user: User, password: str) -> None:
-    if user.provider == AuthProvider.LOCAL:
-        if user.password_hash is None or not await verify_password(
-            password, user.password_hash
-        ):
-            raise InvalidCredentialsError()
+    if user.password_hash is None or not await verify_password(
+        password, user.password_hash
+    ):
+        raise InvalidCredentialsError()
 
+    session_ids = select(Session.id).where(Session.user_id == user.id)
+    await db.execute(
+        delete(UsedRefreshToken).where(UsedRefreshToken.session_id.in_(session_ids))
+    )
+    await db.execute(delete(Session).where(Session.user_id == user.id))
+
+    user.email = f"deleted-{user.id.hex}@deleted.invalid"
+    user.password_hash = None
+    user.is_verified = False
     user.is_deleted = True
 
-    await revoke_all_sessions(db, user, commit=False)
+    await db.commit()
+
+
+async def purge_stale_sessions(db: AsyncSession) -> int:
+    now = utcnow()
+    revoked_cutoff = now - timedelta(days=settings.session_retention_days)
+
+    stale_ids = select(Session.id).where(
+        or_(
+            Session.expires_at < now,
+            Session.absolute_expires_at < now,
+            Session.revoked_at < revoked_cutoff,
+        )
+    )
+
+    await db.execute(
+        delete(UsedRefreshToken).where(UsedRefreshToken.session_id.in_(stale_ids))
+    )
+    result = await db.execute(
+        delete(Session).where(Session.id.in_(stale_ids)).returning(Session.id)
+    )
+    removed = len(result.all())
 
     await db.commit()
+
+    return removed

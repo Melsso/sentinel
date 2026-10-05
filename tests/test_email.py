@@ -12,6 +12,7 @@ from sentinel.core.email import (
     get_email_sender,
     send_email,
 )
+from sentinel.core.logging import hash_email
 from tests.conftest import unique_email
 
 
@@ -39,12 +40,26 @@ async def test_console_sender_logs_the_email(caplog):
     assert record.body == "Body text"
 
 
-async def test_get_email_sender_defaults_to_console(monkeypatch):
+async def test_console_backend_allowed_with_dev_flag(monkeypatch):
     monkeypatch.setattr(settings, "email_backend", "console")
+    monkeypatch.setattr(settings, "allow_console_email", True)
 
-    sender = get_email_sender()
+    assert isinstance(get_email_sender(), ConsoleEmailSender)
 
-    assert isinstance(sender, ConsoleEmailSender)
+
+async def test_console_backend_refused_without_dev_flag(monkeypatch):
+    monkeypatch.setattr(settings, "email_backend", "console")
+    monkeypatch.setattr(settings, "allow_console_email", False)
+
+    with pytest.raises(RuntimeError, match="ALLOW_CONSOLE_EMAIL"):
+        get_email_sender()
+
+
+async def test_unknown_backend_refused(monkeypatch):
+    monkeypatch.setattr(settings, "email_backend", "carrier-pigeon")
+
+    with pytest.raises(RuntimeError, match="Unknown EMAIL_BACKEND"):
+        get_email_sender()
 
 
 async def test_get_email_sender_returns_smtp_when_configured(monkeypatch):
@@ -66,6 +81,7 @@ async def test_get_email_sender_smtp_without_host_raises(monkeypatch):
 
 async def test_get_email_sender_is_cached(monkeypatch):
     monkeypatch.setattr(settings, "email_backend", "console")
+    monkeypatch.setattr(settings, "allow_console_email", True)
 
     first = get_email_sender()
     second = get_email_sender()
@@ -104,19 +120,48 @@ async def test_smtp_sender_calls_aiosmtplib_with_correct_args(monkeypatch):
     }
 
 
-async def test_send_email_swallows_sender_failures(monkeypatch, caplog):
+async def test_send_email_swallows_failures_after_retrying(monkeypatch, caplog):
+    monkeypatch.setattr(settings, "email_send_attempts", 3)
+    monkeypatch.setattr(settings, "email_retry_base_delay_seconds", 0.0)
+
     class BrokenSender:
+        calls = 0
+
         async def send(self, to: str, subject: str, body: str) -> None:
+            BrokenSender.calls += 1
             raise ConnectionError("smtp server unreachable")
 
     monkeypatch.setattr(email_module, "_sender", BrokenSender())
 
-    with caplog.at_level(logging.ERROR, logger="sentinel.email"):
-        await send_email("user@example.com", "Subject", "Body")  # must not raise
+    with caplog.at_level(logging.WARNING, logger="sentinel.email"):
+        await send_email("user@example.com", "Subject", "Body")
 
-    record = next(r for r in caplog.records if r.name == "sentinel.email")
-    assert record.event == "email_send_failed"
-    assert record.to == "user@example.com"
+    records = [r for r in caplog.records if r.name == "sentinel.email"]
+    assert BrokenSender.calls == 3
+    assert [r.attempt for r in records] == [1, 2, 3]
+    assert records[-1].final is True
+    assert records[-1].event == "email_send_failed"
+    assert records[-1].to_hash == hash_email("user@example.com")
+    assert not hasattr(records[-1], "to")
+
+
+async def test_send_email_succeeds_after_a_transient_failure(monkeypatch):
+    monkeypatch.setattr(settings, "email_send_attempts", 3)
+    monkeypatch.setattr(settings, "email_retry_base_delay_seconds", 0.0)
+
+    class FlakySender:
+        calls = 0
+
+        async def send(self, to: str, subject: str, body: str) -> None:
+            FlakySender.calls += 1
+            if FlakySender.calls < 2:
+                raise ConnectionError("temporary")
+
+    monkeypatch.setattr(email_module, "_sender", FlakySender())
+
+    await send_email("user@example.com", "Subject", "Body")
+
+    assert FlakySender.calls == 2
 
 
 async def test_register_sends_verification_email(client, fake_email):

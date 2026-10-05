@@ -135,3 +135,37 @@ async def test_no_secrets_leak_into_audit_logs(client, verified_user, login, cap
                 assert "NewPassword123!" not in value
                 assert tokens["access_token"] not in value
                 assert tokens["refresh_token"] not in value
+
+
+async def test_audit_logs_hash_emails_by_default(client, verified_user, caplog):
+    from sentinel.core.logging import hash_email
+
+    user = await verified_user()
+
+    with caplog.at_level(logging.INFO, logger="sentinel.audit"):
+        await client.post(
+            "/auth/login", json={"email": user["email"], "password": "wrong-password"}
+        )
+
+    record = next(r for r in _events(caplog) if r.event == "login_failed")
+    assert record.email_hash == hash_email(user["email"])
+    assert not hasattr(record, "email")
+    for value in vars(record).values():
+        assert not isinstance(value, str) or user["email"] not in value
+
+
+async def test_audit_logs_include_email_when_log_pii_enabled(
+    client, verified_user, caplog, monkeypatch
+):
+    from sentinel.config import settings
+
+    monkeypatch.setattr(settings, "log_pii", True)
+    user = await verified_user()
+
+    with caplog.at_level(logging.INFO, logger="sentinel.audit"):
+        await client.post(
+            "/auth/login", json={"email": user["email"], "password": "wrong-password"}
+        )
+
+    record = next(r for r in _events(caplog) if r.event == "login_failed")
+    assert record.email == user["email"]

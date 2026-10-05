@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import (
 
 from sentinel.config import settings
 from sentinel.core.security import hash_token
-from sentinel.database.models import AuthProvider, Base, Session, User
+from sentinel.database.models import Base, Session, User
 from sentinel.database.session import get_db
 from sentinel.main import app
 
@@ -122,6 +122,12 @@ class FakeRedis:
 
     async def eval(self, script, numkeys, *keys_and_args):
         return await self.incr(keys_and_args[0])
+
+    async def scan_iter(self, match="*"):
+        prefix = match.removesuffix("*").replace("\\", "")
+        for key in list(self.storage):
+            if key.startswith(prefix):
+                yield key
 
 
 @pytest.fixture
@@ -259,7 +265,6 @@ async def make_db_user(db_session):
         defaults = dict(
             email=unique_email(),
             password_hash=None,
-            provider=AuthProvider.LOCAL,
             is_verified=True,
             is_deleted=False,
         )

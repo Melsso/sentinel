@@ -1,7 +1,6 @@
 import pytest
 
 from sentinel.config import settings
-from sentinel.database.models import AuthProvider
 from tests.conftest import decode_token, unique_email
 
 pytestmark = pytest.mark.asyncio
@@ -66,25 +65,8 @@ async def test_login_deleted_user(client, verified_user, update_user):
     assert response.status_code == 401
 
 
-async def test_login_oauth_account_has_no_password(client, make_db_user):
-    oauth_user = await make_db_user(
-        provider=AuthProvider.GOOGLE,
-        provider_user_id="google-oauth-subject-id",
-        password_hash=None,
-        is_verified=True,
-    )
-
-    response = await client.post(
-        "/auth/login",
-        json={"email": oauth_user.email, "password": "anything-at-all"},
-    )
-
-    assert response.status_code == 401
-
-
 async def test_login_missing_password_hash(client, make_db_user):
     user = await make_db_user(
-        provider=AuthProvider.LOCAL,
         password_hash=None,
         is_verified=True,
     )

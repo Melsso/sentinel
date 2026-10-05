@@ -1,24 +1,10 @@
-from datetime import date, datetime
-from enum import Enum
+from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Date, DateTime, Enum as SQLEnum, String, ForeignKey
+from sqlalchemy import DateTime, String, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase, relationship
 
 from sentinel.core.time import utcnow
-
-
-class AuthProvider(str, Enum):
-    LOCAL = "local"
-    GOOGLE = "google"
-    GITHUB = "github"
-    APPLE = "apple"
-    DISCORD = "discord"
-
-
-class UserRole(str, Enum):
-    USER = "user"
-    ADMIN = "admin"
 
 
 class Base(DeclarativeBase):
@@ -30,19 +16,13 @@ class User(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    provider: Mapped[AuthProvider] = mapped_column(
-        SQLEnum(AuthProvider), default=AuthProvider.LOCAL
-    )
-    provider_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     sessions: Mapped[list["Session"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
-    role: Mapped[UserRole] = mapped_column(SQLEnum(UserRole), default=UserRole.USER)
     is_verified: Mapped[bool] = mapped_column(default=False)
     is_deleted: Mapped[bool] = mapped_column(default=False)
 
@@ -64,6 +44,9 @@ class Session(Base):
     )
 
     user: Mapped["User"] = relationship(back_populates="sessions")
+
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     absolute_expires_at: Mapped[datetime] = mapped_column(DateTime)
