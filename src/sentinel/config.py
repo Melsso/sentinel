@@ -1,7 +1,7 @@
 import ipaddress
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _MIN_JWT_SECRET_LENGTH = 32
 _KNOWN_PLACEHOLDER_SECRETS = {
@@ -109,8 +109,7 @@ class Settings(BaseSettings):
             origin.strip() for origin in self.cors_origins.split(",") if origin.strip()
         ]
 
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(env_file=".env")
 
 
 settings = Settings()

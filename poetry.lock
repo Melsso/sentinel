@@ -127,10 +127,7 @@ files = [
 ]
 
 [package.dependencies]
-cffi = [
-    {version = ">=1.0.1", markers = "python_version < \"3.14\""},
-    {version = ">=2.0.0b1", markers = "python_version >= \"3.14\""},
-]
+cffi = {version = ">=1.0.1", markers = "python_version < \"3.14\""}
 
 [[package]]
 name = "ast-serialize"
@@ -1991,5 +1988,5 @@ standard = ["httptools (>=0.8.0)", "python-dotenv (>=0.13)", "pyyaml (>=5.1)", "
 
 [metadata]
 lock-version = "2.1"
-python-versions = ">=3.11,<3.15"
-content-hash = "a650cb313d5432bb51dfdaa5b0db2ececd51bd2af3ef7a54cd0284c74f6246df"
+python-versions = ">=3.11,<3.14"
+content-hash = "3d8423be7e14dd195d2ca857d4f9263bb6a7435f105d339346e172ff52ed07b4"

@@ -6,7 +6,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@postgres:5432/sentinel
       REDIS_URL: redis://redis:6379
-      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (min 32 chars) in .env or your shell}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (min 32 chars) in .env, see .env.example}
       CORS_ORIGINS: http://localhost:3000,http://localhost:5173
       EMAIL_BACKEND: console
       ALLOW_CONSOLE_EMAIL: "true"

@@ -27,10 +27,6 @@ from sentinel.database.models import Session, UsedRefreshToken, User
 from sentinel.schemas.auth import LoginRequest, RegisterRequest
 
 
-class EmailAlreadyExistsError(Exception):
-    pass
-
-
 class InvalidCredentialsError(Exception):
     pass
 

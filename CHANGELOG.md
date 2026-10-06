@@ -3,7 +3,7 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.2.0] - 2026-10-07
 
 ### Security
 - Refresh-token rotation is now atomic (conditional `UPDATE`), so two concurrent `/auth/refresh` calls with the same token can no longer both succeed.
@@ -25,15 +25,26 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 - **Breaking:** `POST /auth/register` returns `202 Accepted` with a generic message instead of the created user.
+- **Breaking:** API datetimes are now timezone-aware UTC and serialised with a UTC offset (`Z`).
 - Replaced `python-jose` with `PyJWT`. This also drops the transitive `ecdsa` dependency, which carried the unfixable PYSEC-2026-1325, so the CI `pip-audit` ignore is removed.
 - Password hashing/verification runs in a worker thread so Argon2 no longer blocks the event loop.
 - Removed unused direct dependencies `rsa` and `cryptography`.
-- Database schema changed (new `sessions.absolute_expires_at` column, new `used_refresh_tokens` table). There are no migrations; recreate the database.
+- Supported Python is now 3.11 and 3.13 (the versions CI tests); `requires-python` is `>=3.11,<3.14`.
+- Settings use `model_config` instead of the deprecated `class Config`.
+- All timestamp columns are `timestamptz` and always yield timezone-aware UTC datetimes.
+- The Docker `CMD` passes `--proxy-headers` explicitly.
+- The env template is now `.env.example` (it was `env.example`, which didn't match the README).
+- Database schema changed (new `sessions.absolute_expires_at`, `sessions.ip_address`, `sessions.user_agent` columns, new `used_refresh_tokens` table, `timestamptz` columns, removed `users` columns). There are no migrations; recreate the database.
 
 ### Added
 - Background purge of expired sessions and sessions revoked more than `SESSION_RETENTION_DAYS` ago (`SESSION_PURGE_INTERVAL_SECONDS`).
 - Sessions record IP and user agent at login; `GET /auth/sessions` returns them and marks the current session (`is_current`).
-- CI runs the suite against a real Redis service container (atomicity tests) and runs the end-to-end smoke test against the docker-compose stack. The smoke test now also covers concurrent refresh and refresh-token reuse.
+- CI runs the suite against a real Redis service container (atomicity tests), runs the checks on Python 3.11 and 3.13, and runs the end-to-end smoke test against the docker-compose stack. The smoke test also covers concurrent refresh and refresh-token reuse.
+- `SECURITY.md` and `docs/DEPLOYMENT.md`.
 
 ### Removed
 - Unused scaffolding: `AuthProvider`, `UserRole`, OAuth columns on `users`, and the unused `date_of_birth` field. `provider` and `role` are no longer returned by the API.
+
+## [0.1.0]
+
+Initial version.
