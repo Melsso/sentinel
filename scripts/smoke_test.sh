@@ -22,7 +22,7 @@ pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
 refresh_status() {
-  curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/auth/refresh" \
+  curl -s -o /dev/null -w "%{http_code}\n" -X POST "$BASE_URL/auth/refresh" \
     -H "Content-Type: application/json" \
     -d "{\"refresh_token\":\"$1\"}"
 }
@@ -138,6 +138,7 @@ for n in 1 2 3 4; do
   refresh_status "$RACE_TOKEN" > "$TMP_DIR/race_$n" &
 done
 wait
+echo "statuses: $(cat "$TMP_DIR"/race_* | tr '\n' ' ')"
 WINNERS=$(cat "$TMP_DIR"/race_* | grep -c '^200$' || true)
 [ "$WINNERS" = "1" ] || fail "expected exactly one successful concurrent refresh, got $WINNERS"
 pass "exactly one of 4 concurrent refreshes succeeded"
